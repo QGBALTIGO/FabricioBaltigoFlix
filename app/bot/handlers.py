@@ -1416,7 +1416,7 @@ async def callback(
                 == "off"
             ):
                 sub.notify_level = (
-                    "important"
+                    "all"
                 )
 
             await session.commit()
