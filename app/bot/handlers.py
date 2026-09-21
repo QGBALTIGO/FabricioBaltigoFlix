@@ -42,6 +42,8 @@ from app.models import (
 )
 from app.presentation import (
     format_tracking_card,
+    format_tracking_history_fallback,
+    format_tracking_history_rich_chunks,
     format_tracking_rich_html,
 )
 from app.share import verify_share_payload
@@ -1481,69 +1483,72 @@ async def callback(
                 )
 
         elif action == "history":
+            # Atualiza a fonte antes de montar o histórico para
+            # aproveitar também os metadados brutos mais recentes.
+            try:
+                await service(
+                    context
+                ).refresh_shipment(
+                    session,
+                    sub.shipment,
+                )
+                sub = await service(
+                    context
+                ).get_subscription(
+                    session,
+                    user.id,
+                    sub_id,
+                )
+            except Exception:
+                log.exception(
+                    "Falha ao atualizar antes do histórico"
+                )
+
             events = await service(
                 context
             ).history(
                 session,
                 sub.shipment_id,
-                25,
+                50,
             )
 
             if not events:
                 await query.answer(
-                    "Ainda não há eventos "
-                    "no histórico.",
+                    "Ainda não há eventos no histórico.",
                     show_alert=True,
                 )
                 return
 
-            lines = [
-                (
-                    "📋 <b>Histórico</b>\n"
-                    "<code>"
-                    f"{html.escape(sub.shipment.tracking_number)}"
-                    "</code>"
-                ),
-                "",
-            ]
-
-            for ev in events:
-                lines.append(
-                    status_label(
-                        ev.status
-                    )
-                    + "\n"
-                    + format_datetime(
-                        ev.event_at,
-                        settings
-                        .display_timezone,
-                    )
-                    + " — "
-                    + html.escape(
-                        ev.description
-                    )
-                    + (
-                        "\n📍 "
-                        + html.escape(
-                            ev.location
-                        )
-                        if ev.location
-                        else ""
-                    )
-                    + "\n"
-                )
-
-            await (
-                query.message
-                .reply_text(
-                    "\n".join(
-                        lines
-                    )[:3900],
-                    parse_mode=(
-                        ParseMode.HTML
-                    ),
+            chunks = (
+                format_tracking_history_rich_chunks(
+                    sub,
+                    sub.shipment,
+                    events,
+                    settings.display_timezone,
+                    events_per_chunk=5,
                 )
             )
+
+            try:
+                for chunk in chunks:
+                    await send_rich_message(
+                        settings.telegram_bot_token,
+                        query.message.chat_id,
+                        chunk,
+                    )
+            except TelegramRichMessageError:
+                log.exception(
+                    "Falha no histórico Rich Message; usando fallback HTML."
+                )
+                await query.message.reply_text(
+                    format_tracking_history_fallback(
+                        sub,
+                        sub.shipment,
+                        events,
+                        settings.display_timezone,
+                    ),
+                    parse_mode=ParseMode.HTML,
+                )
 
         elif action == "explain":
             await (
