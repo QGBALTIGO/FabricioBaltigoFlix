@@ -563,6 +563,33 @@ async def text_tracking(
         )
         return
 
+    message = update.effective_message
+    forwarded = bool(
+        getattr(
+            message,
+            "forward_origin",
+            None,
+        )
+        or getattr(
+            message,
+            "forward_date",
+            None,
+        )
+    )
+    if forwarded:
+        from app.bot.smart import (
+            offer_smart_candidates,
+        )
+
+        offered = await offer_smart_candidates(
+            update,
+            context,
+            text,
+            source="forwarded_message",
+        )
+        if offered:
+            return
+
     number, nickname = parse_tracking_input(
         text
     )
@@ -571,28 +598,11 @@ async def text_tracking(
             offer_smart_candidates,
         )
 
-        message = update.effective_message
-        forwarded = bool(
-            getattr(
-                message,
-                "forward_origin",
-                None,
-            )
-            or getattr(
-                message,
-                "forward_date",
-                None,
-            )
-        )
         offered = await offer_smart_candidates(
             update,
             context,
             text,
-            source=(
-                "forwarded_message"
-                if forwarded
-                else "message"
-            ),
+            source="message",
         )
         if offered:
             return
