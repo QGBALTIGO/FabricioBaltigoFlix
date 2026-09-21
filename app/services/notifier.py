@@ -15,8 +15,8 @@ from app.bot.rich import (
 from app.config import get_settings
 from app.models import Shipment, Subscription, TrackingEvent
 from app.presentation import (
-    format_tracking_card,
-    format_tracking_rich_html,
+    format_tracking_notification_fallback,
+    format_tracking_notification_rich_html,
 )
 from app.status import should_notify
 
@@ -29,14 +29,11 @@ def format_event_notification(
     shipment: Shipment,
     event: TrackingEvent,
 ) -> str:
-    return (
-        "🔔 <b>Nova movimentação</b>\n\n"
-        + format_tracking_card(
-            subscription,
-            shipment,
-            settings.display_timezone,
-            event=event,
-        )
+    return format_tracking_notification_fallback(
+        subscription,
+        shipment,
+        event,
+        settings.display_timezone,
     )
 
 
@@ -78,11 +75,11 @@ async def notify_new_events(
                     await send_rich_message(
                         settings.telegram_bot_token,
                         sub.user.telegram_id,
-                        format_tracking_rich_html(
+                        format_tracking_notification_rich_html(
                             sub,
                             shipment,
+                            event,
                             settings.display_timezone,
-                            event=event,
                         ),
                     )
                 except TelegramRichMessageError:
