@@ -466,6 +466,8 @@ def format_tracking_notification_rich_html(
     shipment: Shipment,
     event: TrackingEvent,
     timezone_name: str,
+    *,
+    new_events_count: int = 1,
 ) -> str:
     raw = _safe_extra(shipment)
     matched = _matching_raw_event(
@@ -538,6 +540,15 @@ def format_tracking_notification_rich_html(
         ),
     ]
 
+    if new_events_count > 1:
+        rows.append(
+            "<tr><td>"
+            "🧾 "
+            f"<b>{new_events_count} novas movimentações</b> "
+            "foram registradas desde a última consulta."
+            "</td></tr>"
+        )
+
     if origin and destination:
         rows.append(
             "<tr><td>"
@@ -586,6 +597,8 @@ def format_tracking_notification_fallback(
     shipment: Shipment,
     event: TrackingEvent,
     timezone_name: str,
+    *,
+    new_events_count: int = 1,
 ) -> str:
     raw = _safe_extra(shipment)
     matched = _matching_raw_event(
@@ -630,6 +643,16 @@ def format_tracking_notification_fallback(
         "💡 <b>Agora:</b> "
         + html.escape(action_title),
     ]
+
+    if new_events_count > 1:
+        lines.extend([
+            "",
+            (
+                "🧾 "
+                f"<b>{new_events_count} novas movimentações</b> "
+                "foram registradas desde a última consulta."
+            ),
+        ])
 
     if origin and destination:
         lines.extend([
