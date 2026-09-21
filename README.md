@@ -101,14 +101,15 @@ Quando há histórico suficiente da mesma transportadora, o painel também calcu
 
 ### Alertas avançados
 
-O toggle rápido de alertas continua existindo. Opcionalmente, cada pacote pode ativar filtros separados para:
+Cada pacote possui um único botão **🔔 Alertas**. Dentro dele, o usuário pode:
 
-- movimentações intermediárias;
-- saída para entrega;
-- problemas, fiscalização e retirada;
-- entrega concluída.
+- ativar ou desativar todos os alertas;
+- escolher movimentações intermediárias;
+- escolher saída para entrega;
+- escolher problemas, fiscalização e retirada;
+- escolher entrega concluída.
 
-O usuário também pode configurar horário silencioso. Eventos ocorridos nesse período são persistidos no PostgreSQL e entregues depois, sem serem descartados.
+Não há horários silenciosos: as notificações habilitadas são enviadas assim que a movimentação é processada.
 
 ### Assistente de ocorrência
 
@@ -131,9 +132,8 @@ Tabelas principais:
 
 `provider_health` guarda a saúde das fontes.
 `polling_states` controla quando cada encomenda deve ser consultada novamente.
-`user_preferences` guarda preferências globais como horário silencioso.
 `subscription_preferences` guarda alertas e metadados opcionais por encomenda.
-`deferred_notifications` garante que alertas silenciosos sejam entregues depois.
+`user_preferences` e `deferred_notifications` permanecem apenas para compatibilidade e drenagem de dados criados pela antiga função de horário silencioso.
 
 ## Melhor Rastreio GraphQL
 
