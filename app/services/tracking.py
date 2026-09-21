@@ -33,6 +33,10 @@ from app.providers.rastreador_pacotes import RastreadorPacotesProvider
 from app.providers.seventeen_track import SeventeenTrackProvider
 from app.providers.ship24 import Ship24Provider
 from app.providers.total_express_direct import TotalExpressDirectProvider
+from app.services.archive import (
+    archive_cutoff,
+    delivered_reference_sql,
+)
 from app.status import normalize_status
 from app.utils import event_hash, normalize_tracking_number
 
@@ -167,9 +171,17 @@ class TrackingService:
         user_id: int,
     ) -> None:
         active_count = await session.scalar(
-            select(func.count(Subscription.id)).where(
+            select(
+                func.count(Subscription.id)
+            )
+            .join(
+                Shipment,
+                Shipment.id == Subscription.shipment_id,
+            )
+            .where(
                 Subscription.user_id == user_id,
                 Subscription.is_active.is_(True),
+                Shipment.status != "delivered",
             )
         )
         if (active_count or 0) >= self.settings.max_active_shipments_per_user:
@@ -1438,6 +1450,7 @@ class TrackingService:
         user_id: int,
         *,
         delivered: bool | None = False,
+        archived: bool | None = None,
         status: str | None = None,
         carrier: str | None = None,
         query: str | None = None,
@@ -1452,6 +1465,17 @@ class TrackingService:
 
         if delivered is True:
             conditions.append(Shipment.status == "delivered")
+
+            if archived is not None:
+                cutoff = archive_cutoff(
+                    self.settings.delivered_archive_after_days
+                )
+                reference = delivered_reference_sql()
+                conditions.append(
+                    reference < cutoff
+                    if archived
+                    else reference >= cutoff
+                )
         elif delivered is False:
             conditions.append(Shipment.status != "delivered")
 
