@@ -75,6 +75,12 @@ log = logging.getLogger(__name__)
 settings = get_settings()
 
 _channel_member_cache: dict[int, float] = {}
+_channel_member_semaphore = asyncio.Semaphore(
+    max(
+        1,
+        settings.required_channel_check_concurrency,
+    )
+)
 
 
 def service(context: CallbackContext):
@@ -140,10 +146,11 @@ async def _require_channel_membership(
             )
 
     try:
-        member = await context.bot.get_chat_member(
-            chat_id=settings.required_channel,
-            user_id=user.id,
-        )
+        async with _channel_member_semaphore:
+            member = await context.bot.get_chat_member(
+                chat_id=settings.required_channel,
+                user_id=user.id,
+            )
         if _is_channel_member(member):
             _channel_member_cache[
                 user.id
