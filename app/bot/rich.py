@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -9,10 +10,57 @@ class TelegramRichMessageError(RuntimeError):
     pass
 
 
-def _markup_payload(reply_markup: Any | None) -> Any | None:
+_client: httpx.AsyncClient | None = None
+_client_lock = asyncio.Lock()
+
+
+async def _get_client() -> httpx.AsyncClient:
+    global _client
+
+    if (
+        _client is not None
+        and not _client.is_closed
+    ):
+        return _client
+
+    async with _client_lock:
+        if (
+            _client is None
+            or _client.is_closed
+        ):
+            _client = httpx.AsyncClient(
+                timeout=25.0,
+                limits=httpx.Limits(
+                    max_connections=100,
+                    max_keepalive_connections=30,
+                    keepalive_expiry=30.0,
+                ),
+            )
+
+    return _client
+
+
+async def close_rich_client() -> None:
+    global _client
+
+    if (
+        _client is not None
+        and not _client.is_closed
+    ):
+        await _client.aclose()
+
+    _client = None
+
+
+def _markup_payload(
+    reply_markup: Any | None,
+) -> Any | None:
     if reply_markup is None:
         return None
-    if hasattr(reply_markup, "to_dict"):
+    if hasattr(
+        reply_markup,
+        "to_dict",
+    ):
         return reply_markup.to_dict()
     return reply_markup
 
@@ -27,25 +75,70 @@ async def _bot_api(
             "Token do Telegram não configurado."
         )
 
-    url = f"https://api.telegram.org/bot{token}/{method}"
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{token}/{method}"
+    )
 
-    try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            response = await client.post(url, json=payload)
-    except httpx.HTTPError as exc:
-        # Não inclui a URL na exceção para evitar vazar o token em logs.
-        raise TelegramRichMessageError(
-            "Falha de rede na Bot API."
-        ) from exc
+    client = await _get_client()
 
-    try:
-        body = response.json()
-    except ValueError as exc:
-        raise TelegramRichMessageError(
-            "Resposta inválida da Bot API."
-        ) from exc
+    for attempt in range(2):
+        try:
+            response = await client.post(
+                url,
+                json=payload,
+            )
+        except httpx.HTTPError as exc:
+            raise TelegramRichMessageError(
+                "Falha de rede na Bot API."
+            ) from exc
 
-    if not body.get("ok"):
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise TelegramRichMessageError(
+                "Resposta inválida da Bot API."
+            ) from exc
+
+        if body.get("ok"):
+            result = body.get("result")
+            return (
+                result
+                if isinstance(
+                    result,
+                    dict,
+                )
+                else {}
+            )
+
+        error_code = body.get(
+            "error_code"
+        )
+        parameters = body.get(
+            "parameters"
+        ) or {}
+        retry_after = parameters.get(
+            "retry_after"
+        )
+
+        if (
+            error_code == 429
+            and retry_after
+            and attempt == 0
+        ):
+            await asyncio.sleep(
+                min(
+                    max(
+                        float(
+                            retry_after
+                        ),
+                        1.0,
+                    ),
+                    15.0,
+                )
+            )
+            continue
+
         description = str(
             body.get("description")
             or "Falha ao enviar Rich Message."
@@ -54,8 +147,9 @@ async def _bot_api(
             description[:300]
         )
 
-    result = body.get("result")
-    return result if isinstance(result, dict) else {}
+    raise TelegramRichMessageError(
+        "Falha ao enviar Rich Message."
+    )
 
 
 async def send_rich_message(
@@ -72,12 +166,18 @@ async def send_rich_message(
             "html": rich_html,
             "skip_entity_detection": True,
         },
-        "disable_notification": disable_notification,
+        "disable_notification": (
+            disable_notification
+        ),
     }
 
-    markup = _markup_payload(reply_markup)
+    markup = _markup_payload(
+        reply_markup
+    )
     if markup is not None:
-        payload["reply_markup"] = markup
+        payload[
+            "reply_markup"
+        ] = markup
 
     return await _bot_api(
         token,
@@ -103,9 +203,13 @@ async def edit_rich_message(
         },
     }
 
-    markup = _markup_payload(reply_markup)
+    markup = _markup_payload(
+        reply_markup
+    )
     if markup is not None:
-        payload["reply_markup"] = markup
+        payload[
+            "reply_markup"
+        ] = markup
 
     return await _bot_api(
         token,
