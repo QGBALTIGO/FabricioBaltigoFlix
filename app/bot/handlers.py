@@ -35,6 +35,7 @@ from app.models import (
     TrackingEvent,
     User,
 )
+from app.presentation import format_tracking_card
 from app.share import verify_share_payload
 from app.status import (
     status_explanation,
@@ -76,104 +77,11 @@ def _keyboard(
 def fmt_shipment(
     sub: Subscription,
 ) -> str:
-    s = sub.shipment
-    name = html.escape(
-        sub.nickname
-        or s.carrier_name
-        or "Encomenda"
+    return format_tracking_card(
+        sub,
+        sub.shipment,
+        settings.display_timezone,
     )
-    carrier = html.escape(
-        s.carrier_name
-        or "Transportadora em detecção"
-    )
-    description = html.escape(
-        s.last_description or ""
-    )
-    location = html.escape(
-        s.last_location or ""
-    )
-
-    lines = [
-        f"📦 <b>{name}</b>",
-        (
-            "🔎 <code>"
-            f"{html.escape(s.tracking_number)}"
-            "</code>"
-        ),
-        f"🚚 {carrier}",
-        status_label(s.status),
-    ]
-
-    if description:
-        lines.append(
-            f"📝 {description}"
-        )
-    if location:
-        lines.append(
-            f"📍 {location}"
-        )
-
-    if s.last_event_at:
-        lines.append(
-            "🕐 Atualizado em "
-            f"{format_datetime(s.last_event_at, settings.display_timezone)} "
-            f"({humanize_age(s.last_event_at)})"
-        )
-    else:
-        lines.append(
-            "🕐 Ainda sem movimentação registrada"
-        )
-
-    reference = (
-        s.last_event_at
-        or s.registered_at
-    )
-
-    if (
-        s.status != "delivered"
-        and is_stale(
-            reference,
-            settings.stale_after_hours,
-        )
-    ):
-        lines.append(
-            "⚠️ <b>Atenção:</b> esta "
-            "encomenda está há bastante "
-            "tempo sem nova movimentação."
-        )
-
-    if (
-        mentions_payment(
-            s.last_description
-        )
-        or s.status == "customs"
-    ):
-        lines.append(
-            "🛡 <b>Segurança:</b> "
-            "confirme qualquer cobrança "
-            "somente em canais oficiais "
-            "antes de pagar."
-        )
-
-    if (
-        not sub.notifications_enabled
-        or sub.notify_level == "off"
-    ):
-        lines.append(
-            "🔕 Alertas desativados"
-        )
-    elif sub.notify_level == "all":
-        lines.append(
-            "🔔 Alertas: todas as "
-            "movimentações"
-        )
-    else:
-        lines.append(
-            "⭐ Alertas: movimentações "
-            "importantes"
-        )
-
-    return "\n".join(lines)
 
 
 async def _ensure_current_user(

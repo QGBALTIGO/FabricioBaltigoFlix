@@ -10,8 +10,8 @@ from telegram.error import Forbidden, TelegramError
 
 from app.config import get_settings
 from app.models import Shipment, Subscription, TrackingEvent
-from app.status import should_notify, status_label
-from app.utils import format_datetime
+from app.presentation import format_tracking_card
+from app.status import should_notify
 
 settings = get_settings()
 log = logging.getLogger(__name__)
@@ -22,31 +22,15 @@ def format_event_notification(
     shipment: Shipment,
     event: TrackingEvent,
 ) -> str:
-    name = (
-        subscription.nickname
-        or shipment.carrier_name
-        or "Sua encomenda"
+    return (
+        "🔔 <b>Nova movimentação</b>\n\n"
+        + format_tracking_card(
+            subscription,
+            shipment,
+            settings.display_timezone,
+            event=event,
+        )
     )
-
-    lines = [
-        "🔔 <b>Nova movimentação</b>",
-        "",
-        f"📦 <b>{name}</b>",
-        f"🔎 <code>{shipment.tracking_number}</code>",
-        f"{status_label(event.status)}",
-    ]
-
-    if event.description:
-        lines.append(f"📝 {event.description}")
-
-    if event.location:
-        lines.append(f"📍 {event.location}")
-
-    lines.append(
-        f"🕐 {format_datetime(event.event_at, settings.display_timezone)}"
-    )
-
-    return "\n".join(lines)
 
 
 async def notify_new_events(
