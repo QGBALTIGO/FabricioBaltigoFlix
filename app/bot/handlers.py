@@ -211,7 +211,7 @@ def _my_packages_text(total: int) -> str:
         "📦 <b>Meus pacotes</b>\n\n"
         "<blockquote>"
         + count
-        + "</blockquote>\n"
+        + "</blockquote>\n\n"
         "Toque em um pacote para ver o status, "
         "histórico e alertas."
     )
