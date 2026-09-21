@@ -1825,8 +1825,8 @@ async def privacy_cmd(
                 "assinatura para impedir a criação "
                 "manual de convites para outros "
                 "rastreios.\n\n"
-                "Use 🗑 Parar de acompanhar para "
-                "remover um pacote do seu painel."
+                "Para excluir um código salvo, use "
+                "o botão 🗑 Remover pacote no menu principal."
             ),
             parse_mode=ParseMode.HTML,
         )
