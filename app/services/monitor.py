@@ -273,7 +273,7 @@ async def _poll_shipments(
                     return 0, 0
 
                 # O slot limita apenas a consulta externa. O fanout de
-                # Telegram e a fila silenciosa não bloqueiam novas consultas.
+                # Telegram e tarefas posteriores não bloqueiam novas consultas.
                 async with semaphore:
                     _, new_events = (
                         await tracking_service
