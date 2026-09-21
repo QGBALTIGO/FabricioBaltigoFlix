@@ -109,8 +109,13 @@ def normalize_status(raw: str | None, description: str | None = None) -> str:
 
 
 def should_notify(notify_level: str, status: str) -> bool:
-    if notify_level == "all":
-        return True
     if notify_level == "off":
         return False
-    return status in IMPORTANT_STATUSES
+
+    # A UI atual tem apenas alerta ligado/desligado.
+    # "important" é mantido como alias legado de ligado para
+    # assinaturas criadas antes da simplificação da interface.
+    if notify_level in {"all", "important"}:
+        return True
+
+    return True
