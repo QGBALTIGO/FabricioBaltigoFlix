@@ -184,6 +184,11 @@ class OperationalEvent(Base):
             "name",
             "created_at",
         ),
+        Index(
+            "ix_operational_context_created",
+            "context_name",
+            "created_at",
+        ),
     )
 
     id: Mapped[int] = mapped_column(
@@ -195,6 +200,10 @@ class OperationalEvent(Base):
     )
     name: Mapped[str] = mapped_column(
         String(80),
+    )
+    context_name: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
     )
     ok: Mapped[bool] = mapped_column(
         Boolean,
