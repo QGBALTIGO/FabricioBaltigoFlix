@@ -32,8 +32,7 @@ def test_shipment_keyboard_has_only_requested_actions_when_enabled():
 
     assert texts == [
         "📋 Histórico",
-        "🔕 Desativar alerta",
-        "⚙️ Alertas",
+        "🔔 Alertas",
         "🧭 O que fazer?",
         "🔗 Compartilhar rastreio",
     ]
@@ -55,8 +54,7 @@ def test_shipment_keyboard_alert_toggle_when_disabled():
 
     assert _texts(markup) == [
         "📋 Histórico",
-        "🔔 Ativar alerta",
-        "⚙️ Alertas",
+        "🔔 Alertas",
         "🧭 O que fazer?",
         "🔗 Compartilhar rastreio",
     ]
@@ -73,3 +71,26 @@ def test_main_menu_exposes_today_dashboard():
     assert MAIN_MENU_TODAY == "🏠 Hoje"
     assert texts[0] == "🏠 Hoje"
     assert "📦 Meus pacotes" in texts
+
+
+def test_shipment_keyboard_has_single_alert_entry_point():
+    sub = SimpleNamespace(
+        id=8,
+        shipment_id=12,
+        notifications_enabled=True,
+        notify_level="all",
+    )
+    texts = _texts(
+        shipment_keyboard(
+            sub,
+            bot_username="MelhorRastreioBot",
+            share_secret="secret",
+        )
+    )
+
+    assert texts.count("🔔 Alertas") == 1
+    assert not any(
+        "Ativar alerta" in text
+        or "Desativar alerta" in text
+        for text in texts
+    )

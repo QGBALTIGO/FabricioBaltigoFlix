@@ -5,10 +5,9 @@ import html
 import logging
 import secrets
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -23,7 +22,6 @@ from app.intake import (
     ocr_text_from_image_bytes,
 )
 from app.models import (
-    DeferredNotification,
     Shipment,
     Subscription,
     User,
@@ -36,8 +34,6 @@ from app.services.insights import (
 )
 from app.services.preferences import (
     get_subscription_preference,
-    get_user_preference,
-    quiet_label,
 )
 from app.status import status_label
 
@@ -437,7 +433,6 @@ async def _today_list(
 def _alert_menu_markup(
     sub: Subscription,
     pref,
-    user_pref,
 ) -> InlineKeyboardMarkup:
     def mark(value: bool) -> str:
         return "✅" if value else "⬜"
@@ -489,26 +484,6 @@ def _alert_menu_markup(
         ],
         [
             InlineKeyboardButton(
-                "🌙 Sem silêncio",
-                callback_data=f"quietpreset:{sub.id}:off",
-            ),
-            InlineKeyboardButton(
-                "🌙 23–07",
-                callback_data=f"quietpreset:{sub.id}:23_7",
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "🌙 22–07",
-                callback_data=f"quietpreset:{sub.id}:22_7",
-            ),
-            InlineKeyboardButton(
-                "🌙 00–08",
-                callback_data=f"quietpreset:{sub.id}:0_8",
-            ),
-        ],
-        [
-            InlineKeyboardButton(
                 "⬅️ Voltar ao rastreio",
                 callback_data=f"open:{sub.id}",
             )
@@ -519,17 +494,11 @@ def _alert_menu_markup(
 
 async def _alert_menu(
     session,
-    user: User,
     sub: Subscription,
 ) -> tuple[str, InlineKeyboardMarkup]:
     pref = await get_subscription_preference(
         session,
         sub.id,
-        create=True,
-    )
-    user_pref = await get_user_preference(
-        session,
-        user.id,
         create=True,
     )
     await session.commit()
@@ -554,15 +523,13 @@ async def _alert_menu(
         "🔔 <b>Alertas</b>\n\n"
         f"📦 <b>{html.escape(name)}</b>\n"
         f"Estado: <b>{status}</b>\n"
-        f"Modo: <b>{mode}</b>\n"
-        f"🌙 Silêncio: <b>{html.escape(quiet_label(user_pref))}</b>\n\n"
-        "Escolha exatamente quais atualizações quer receber. "
-        "Durante o horário silencioso os avisos ficam guardados e são enviados depois."
+        f"Modo: <b>{mode}</b>\n\n"
+        "Use o botão principal para ligar ou desligar todos os alertas. "
+        "Abaixo, você também pode escolher exatamente quais tipos de atualização quer receber."
     )
     return text, _alert_menu_markup(
         sub,
         pref,
-        user_pref,
     )
 
 
@@ -829,7 +796,6 @@ async def smart_callback(
         if data.startswith("alertmenu:"):
             text, markup = await _alert_menu(
                 session,
-                user,
                 sub,
             )
             await query.edit_message_text(
@@ -905,7 +871,6 @@ async def smart_callback(
             await session.commit()
             text, markup = await _alert_menu(
                 session,
-                user,
                 sub,
             )
             await query.edit_message_text(
@@ -914,52 +879,3 @@ async def smart_callback(
                 reply_markup=markup,
             )
             return
-
-        if data.startswith("quietpreset:"):
-            preset = parts[2] if len(parts) > 2 else "off"
-            user_pref = await get_user_preference(
-                session,
-                user.id,
-                create=True,
-            )
-            assert user_pref is not None
-
-            presets = {
-                "23_7": (23 * 60, 7 * 60),
-                "22_7": (22 * 60, 7 * 60),
-                "0_8": (0, 8 * 60),
-            }
-            if preset == "off":
-                user_pref.quiet_hours_enabled = False
-                # Alerts already queued for the quiet window should not stay
-                # asleep after the user explicitly disables silence.
-                await session.execute(
-                    update(DeferredNotification)
-                    .where(
-                        DeferredNotification.subscription_id.in_(
-                            select(Subscription.id).where(
-                                Subscription.user_id == user.id
-                            )
-                        )
-                    )
-                    .values(
-                        deliver_after=datetime.now(timezone.utc)
-                    )
-                )
-            elif preset in presets:
-                start, end = presets[preset]
-                user_pref.quiet_hours_enabled = True
-                user_pref.quiet_start_minute = start
-                user_pref.quiet_end_minute = end
-
-            await session.commit()
-            text, markup = await _alert_menu(
-                session,
-                user,
-                sub,
-            )
-            await query.edit_message_text(
-                text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=markup,
-            )

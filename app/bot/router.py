@@ -32,7 +32,7 @@ def register_handlers(app: Application) -> None:
             smart.smart_callback,
             pattern=(
                 r"^(?:today:|todaylist:|smartadd:|smartcancel:|"
-                r"alertmenu:|alerttoggle:|quietpreset:|assist:)"
+                r"alertmenu:|alerttoggle:|assist:)"
             ),
         )
     )

@@ -30,14 +30,10 @@ from app.models import (
     NotificationLog,
     Shipment,
     Subscription,
-    UserPreference,
 )
 from app.services.notifier import (
     notify_new_events,
     send_due_deferred_notifications,
-)
-from app.services.preferences import (
-    quiet_window,
 )
 from app.services.tracking import (
     TrackingService,
@@ -116,21 +112,6 @@ async def _send_stale_alerts(
             sub.id
             for sub in subs
         ]
-        user_ids = [
-            sub.user_id
-            for sub in subs
-        ]
-        quiet_prefs = {
-            pref.user_id: pref
-            for pref in (
-                await session.scalars(
-                    select(UserPreference).where(
-                        UserPreference.user_id.in_(user_ids)
-                    )
-                )
-            ).all()
-        }
-
         existing_rows = (
             await session.execute(
                 select(
@@ -164,15 +145,6 @@ async def _send_stale_alerts(
         ] = []
 
         for sub in subs:
-            quiet, _ = quiet_window(
-                quiet_prefs.get(sub.user_id),
-                settings.display_timezone,
-            )
-            if quiet:
-                # Do not burn the stale dedupe key while the user is sleeping.
-                # The next stale pass will send it after the quiet window.
-                continue
-
             shipment = sub.shipment
             reference = (
                 shipment.last_event_at
@@ -301,7 +273,7 @@ async def _poll_shipments(
                     return 0, 0
 
                 # O slot limita apenas a consulta externa. O fanout de
-                # Telegram e a fila silenciosa não bloqueiam novas consultas.
+                # Telegram e tarefas posteriores não bloqueiam novas consultas.
                 async with semaphore:
                     _, new_events = (
                         await tracking_service

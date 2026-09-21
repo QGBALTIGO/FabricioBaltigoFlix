@@ -19,8 +19,51 @@ from app.models import (
 from app.services import notifier
 
 
+async def _fixture(session):
+    user = User(
+        telegram_id=123456,
+        first_name="Teste",
+    )
+    session.add(user)
+    await session.flush()
+
+    shipment = Shipment(
+        tracking_number="AB123456789BR",
+        carrier_name="Correios",
+        status="in_transit",
+    )
+    session.add(shipment)
+    await session.flush()
+
+    sub = Subscription(
+        user_id=user.id,
+        shipment_id=shipment.id,
+        notify_level="all",
+        notifications_enabled=True,
+    )
+    session.add(sub)
+    await session.flush()
+
+    event = TrackingEvent(
+        shipment_id=shipment.id,
+        event_hash="legacy-quiet-test",
+        status="in_transit",
+        description="Em trânsito",
+        event_at=datetime.now(timezone.utc),
+    )
+    session.add(event)
+    session.add(
+        UserPreference(
+            user_id=user.id,
+            quiet_hours_enabled=True,
+        )
+    )
+    await session.commit()
+    return user, shipment, sub, event
+
+
 @pytest.mark.asyncio
-async def test_quiet_event_is_persisted_and_delivered_later(
+async def test_legacy_quiet_preference_no_longer_delays_new_alert(
     monkeypatch,
 ):
     engine = create_async_engine(
@@ -35,68 +78,32 @@ async def test_quiet_event_is_persisted_and_delivered_later(
     )
 
     async with Session() as session:
-        user = User(
-            telegram_id=123456,
-            first_name="Teste",
+        user, shipment, sub, event = await _fixture(
+            session
         )
-        session.add(user)
-        await session.flush()
+        delivered = []
 
-        shipment = Shipment(
-            tracking_number="AB123456789BR",
-            carrier_name="Correios",
-            status="in_transit",
-        )
-        session.add(shipment)
-        await session.flush()
-
-        sub = Subscription(
-            user_id=user.id,
-            shipment_id=shipment.id,
-            notify_level="all",
-            notifications_enabled=True,
-        )
-        session.add(sub)
-        await session.flush()
-
-        event = TrackingEvent(
-            shipment_id=shipment.id,
-            event_hash="quiet-test",
-            status="in_transit",
-            description="Em trânsito",
-            event_at=datetime.now(timezone.utc),
-        )
-        session.add(event)
-        session.add(
-            UserPreference(
-                user_id=user.id,
-                quiet_hours_enabled=True,
-            )
-        )
-        await session.commit()
-
-        future = (
-            datetime.now(timezone.utc)
-            + timedelta(hours=2)
-        )
-        monkeypatch.setattr(
-            notifier,
-            "quiet_window",
-            lambda *args, **kwargs: (
-                True,
-                future,
-            ),
-        )
-
-        async def should_not_send(*args, **kwargs):
-            raise AssertionError(
-                "quiet notification sent immediately"
+        async def record_send(
+            bot,
+            subscription,
+            current_shipment,
+            current_event,
+            *,
+            telegram_id=None,
+            new_events_count=1,
+        ):
+            delivered.append(
+                (
+                    subscription.id,
+                    current_event.id,
+                    new_events_count,
+                )
             )
 
         monkeypatch.setattr(
             notifier,
             "_send_event",
-            should_not_send,
+            record_send,
         )
 
         sent = await notifier.notify_new_events(
@@ -106,7 +113,14 @@ async def test_quiet_event_is_persisted_and_delivered_later(
             [event],
         )
 
-        assert sent == 0
+        assert sent == 1
+        assert delivered == [
+            (
+                sub.id,
+                event.id,
+                1,
+            )
+        ]
         queued = int(
             await session.scalar(
                 select(
@@ -117,14 +131,41 @@ async def test_quiet_event_is_persisted_and_delivered_later(
             )
             or 0
         )
-        assert queued == 1
+        assert queued == 0
 
-        deferred = await session.scalar(
-            select(DeferredNotification)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_deferred_queue_is_drained_without_quiet_rules(
+    monkeypatch,
+):
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:"
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    Session = async_sessionmaker(
+        engine,
+        expire_on_commit=False,
+    )
+
+    async with Session() as session:
+        user, shipment, sub, event = await _fixture(
+            session
         )
-        deferred.deliver_after = (
-            datetime.now(timezone.utc)
-            - timedelta(seconds=1)
+
+        session.add(
+            DeferredNotification(
+                subscription_id=sub.id,
+                event_id=event.id,
+                event_count=2,
+                deliver_after=(
+                    datetime.now(timezone.utc)
+                    - timedelta(seconds=1)
+                ),
+            )
         )
         await session.commit()
 
@@ -144,17 +185,10 @@ async def test_quiet_event_is_persisted_and_delivered_later(
                     subscription.id,
                     current_event.id,
                     telegram_id,
+                    new_events_count,
                 )
             )
 
-        monkeypatch.setattr(
-            notifier,
-            "quiet_window",
-            lambda *args, **kwargs: (
-                False,
-                None,
-            ),
-        )
         monkeypatch.setattr(
             notifier,
             "_send_event",
@@ -175,6 +209,7 @@ async def test_quiet_event_is_persisted_and_delivered_later(
                 sub.id,
                 event.id,
                 user.telegram_id,
+                2,
             )
         ]
         remaining = int(
