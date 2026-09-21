@@ -140,6 +140,10 @@ async def _send_stale_alerts(
         # Libera a conexão do SELECT antes do envio em massa.
         await session.commit()
 
+        pending_logs: list[
+            NotificationLog
+        ] = []
+
         for sub in subs:
             shipment = sub.shipment
             reference = (
@@ -189,7 +193,7 @@ async def _send_stale_alerts(
                     text=text,
                     parse_mode="HTML",
                 )
-                session.add(
+                pending_logs.append(
                     NotificationLog(
                         subscription_id=sub.id,
                         kind="stale",
@@ -213,6 +217,11 @@ async def _send_stale_alerts(
                 await asyncio.sleep(
                     settings.notification_send_spacing_seconds
                 )
+
+        if pending_logs:
+            session.add_all(
+                pending_logs
+            )
 
         await session.commit()
 
