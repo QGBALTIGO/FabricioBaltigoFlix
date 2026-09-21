@@ -899,8 +899,8 @@ async def _show_list(
                 "Adicione seu primeiro código de rastreio para começar."
             )
 
-        empty_markup = (
-            InlineKeyboardMarkup(
+        if mode == "active":
+            empty_markup = InlineKeyboardMarkup(
                 [[
                     InlineKeyboardButton(
                         "➕ Adicionar encomenda",
@@ -908,9 +908,26 @@ async def _show_list(
                     )
                 ]]
             )
-            if mode == "active"
-            else None
-        )
+        elif mode == "delivered":
+            empty_markup = InlineKeyboardMarkup(
+                [[
+                    InlineKeyboardButton(
+                        "🗃 Abrir arquivo",
+                        callback_data="page:archive:0",
+                    )
+                ]]
+            )
+        elif mode == "archive":
+            empty_markup = InlineKeyboardMarkup(
+                [[
+                    InlineKeyboardButton(
+                        "✅ Entregues recentes",
+                        callback_data="page:delivered:0",
+                    )
+                ]]
+            )
+        else:
+            empty_markup = None
 
         if (
             edit
