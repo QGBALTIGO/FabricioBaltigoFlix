@@ -94,5 +94,6 @@ def test_history_uses_three_events_per_page():
     assert page == 1
     assert pages == 3
     assert "2/3" in rich
-    # 1 ETA row + 3 events * 3 rows (status/date, description, location).
-    assert rich.count("<tr><td>") == 10
+    # 1 ETA row + 3 events * 3 rows + 2 blank separator rows.
+    assert rich.count("<tr><td>") == 12
+    assert rich.count("<tr><td><br></td></tr>") == 2
