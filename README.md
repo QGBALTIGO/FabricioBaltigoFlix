@@ -1,46 +1,102 @@
 # Rastreio Baltigo
 
-Bot universal de rastreio para Telegram, com FastAPI, banco de dados, webhooks e API HTTP própria.
+Bot universal de rastreamento para Telegram, com FastAPI, banco de dados, webhooks, API própria e experiência de gerenciamento inspirada em bons rastreadores multi-transportadora, incluindo o Melhor Rastreio. A implementação, identidade e código são próprios e não possuem vínculo com o Melhor Envio.
 
 O index.html antigo da BaltigoFlix foi preservado. O bot vive na pasta app.
 
-## Recursos implementados
+## Recursos
 
-- Cadastro enviando somente o código ou usando /rastrear CODIGO.
+### Rastreamento
+- Envie somente o código ou use /rastrear CODIGO.
 - Autodetecção de transportadora.
 - 17TRACK como provedor principal.
 - Ship24 como fallback opcional.
-- Correios, Jadlog, J&T e milhares de transportadoras conforme a cobertura do provedor.
-- /meus e /entregues.
-- Apelido por encomenda.
-- Histórico de eventos.
-- Atualização manual.
-- Alertas importantes, todos os eventos ou silenciado.
+- Correios, Jadlog, J&T e milhares de transportadoras conforme cobertura dos provedores.
+- Busca imediata das informações após o cadastro, quando o provedor já possui dados.
+- Webhooks para atualização automática.
+- Polling de redundância configurável a cada 2 horas por até 30 dias.
+- Deduplicação global: vários usuários acompanhando o mesmo código não criam vários rastreamentos externos.
 - Deduplicação de eventos.
-- Deduplicação global do mesmo código entre vários usuários.
-- Webhooks 17TRACK e Ship24.
-- Verificação da assinatura SHA-256 da 17TRACK.
-- Verificação do Bearer Secret do Ship24.
-- Telegram por polling ou webhook.
-- API própria em /api/v1/track/{codigo}.
-- Rate limit simples da API.
-- /admin e /broadcast para IDs autorizados.
-- SQLite para desenvolvimento.
-- PostgreSQL para produção.
-- Docker e Docker Compose.
-- Configuração Railway.
-- Health check em /health.
-- Testes automáticos no GitHub Actions.
+
+### Experiência de acompanhamento
+- /meus com 10 encomendas por página.
+- /entregues.
+- /buscar por código, apelido, transportadora, status ou texto da última movimentação.
+- /filtros por status ou transportadora.
+- Página de detalhes no próprio Telegram com:
+  - status;
+  - código;
+  - transportadora;
+  - última atualização;
+  - local;
+  - descrição;
+  - histórico;
+  - explicação do status.
+- Apelido por pacote.
+- Parar de acompanhar.
+- Atualização manual.
+- /relatorio com resumo por status e transportadora.
+
+### Compartilhamento e múltiplos destinatários
+Cada rastreio possui botão "Compartilhar rastreio".
+
+O bot gera um deep-link assinado. A pessoa que recebe o link pode adicionar o mesmo pacote ao próprio /meus e receber as movimentações. Isso funciona como múltiplos destinatários de alerta sem duplicar a consulta ao provedor.
+
+Configure SHARE_SECRET com uma string longa e aleatória.
+
+### Alertas
+Por pacote:
+- Importantes: coleta/postagem, alfândega, chegada ao destino, saída para entrega, falhas e entrega.
+- Todos: qualquer nova movimentação.
+- Sem alertas.
+
+O monitor também pode avisar uma única vez quando a encomenda fica muito tempo sem nova movimentação. O padrão é 72 horas.
+
+### Segurança antifraude
+O bot inclui:
+- /seguranca;
+- aviso permanente de que o Rastreio Baltigo não envia PIX, boleto ou link de cobrança para liberar encomendas;
+- lembrete para validar taxas somente em canais oficiais;
+- destaque extra quando a movimentação menciona pagamento/taxa ou fiscalização aduaneira;
+- links de compartilhamento assinados;
+- Telegram webhook protegido;
+- 17TRACK webhook com validação da assinatura;
+- Ship24 webhook com Bearer Secret;
+- API própria com Bearer Token.
+
+O aviso antifraude não afirma que toda cobrança logística ou fiscal é falsa. Algumas cobranças legítimas podem existir; a orientação é sempre confirmar no canal oficial correspondente.
+
+## Comandos
+
+- /start
+- /rastrear CODIGO
+- /meus
+- /entregues
+- /buscar TERMO
+- /filtros
+- /relatorio
+- /transportadoras NOME
+- /config
+- /seguranca
+- /status
+- /privacidade
+- /cancelar
+- /ajuda
+
+Admins:
+- /admin
+- /broadcast mensagem
 
 ## Configuração mínima
 
-Copie .env.example para .env e preencha:
+Copie .env.example para .env:
 
     TELEGRAM_BOT_TOKEN=seu_token
-    TELEGRAM_MODE=polling
     SEVENTEEN_TRACK_TOKEN=sua_chave
+    ADMIN_IDS=123456789
+    SHARE_SECRET=uma-string-longa-e-aleatoria
 
-Sem uma chave 17TRACK ou Ship24, o bot inicia e salva códigos, mas não consegue buscar movimentações externas.
+Sem 17TRACK ou Ship24, o bot inicia e salva códigos, mas não consegue consultar movimentações externas.
 
 ## Rodar localmente
 
@@ -48,47 +104,35 @@ Sem uma chave 17TRACK ou Ship24, o bot inicia e salva códigos, mas não consegu
     pip install -r requirements.txt
     python -m app
 
-A aplicação sobe por padrão na porta 8000.
-
 ## Docker + PostgreSQL
 
     docker compose up -d --build
 
-Antes de publicar, altere usuário e senha do PostgreSQL no docker-compose.yml.
+Antes de publicar, altere usuário e senha do PostgreSQL do docker-compose.yml.
 
-## Telegram
+## Produção com Telegram Webhook
 
-No BotFather, crie o bot e copie o token.
+    TELEGRAM_MODE=webhook
+    WEBHOOK_BASE_URL=https://seu-dominio.com
+    TELEGRAM_WEBHOOK_SECRET=segredo-forte
 
-Comandos disponíveis:
+Endpoint:
 
-- /start
-- /rastrear CODIGO
-- /meus
-- /entregues
-- /transportadoras NOME
-- /config
-- /status
-- /privacidade
-- /cancelar
-- /ajuda
+    /telegram/webhook
 
-Qualquer texto que tenha formato de código de rastreio também é interpretado automaticamente.
+Para teste local, polling é mais simples.
 
 ## 17TRACK
 
-Configure SEVENTEEN_TRACK_TOKEN.
+Configure:
 
-No painel da 17TRACK, cadastre o webhook:
+    SEVENTEEN_TRACK_TOKEN=
+    SEVENTEEN_TRACK_VERIFY_SIGNATURE=true
+    WEBHOOK_SHARED_SECRET=segredo-forte
+
+Webhook:
 
     https://SEU-DOMINIO/webhooks/17track?secret=SEU_SEGREDO
-
-E configure:
-
-    WEBHOOK_SHARED_SECRET=SEU_SEGREDO
-    SEVENTEEN_TRACK_VERIFY_SIGNATURE=true
-
-A aplicação valida também o header sign oficial da 17TRACK usando SHA-256.
 
 ## Ship24
 
@@ -96,67 +140,70 @@ Configure:
 
     SHIP24_API_KEY=
     SHIP24_WEBHOOK_SECRET=
+    WEBHOOK_SHARED_SECRET=segredo-forte
 
 Webhook:
 
     https://SEU-DOMINIO/webhooks/ship24?secret=SEU_SEGREDO
 
-O endpoint valida Authorization: Bearer com o segredo configurado.
+## Polling de redundância
 
-## Telegram em webhook
+O projeto foi pensado para priorizar webhooks, porque isso reduz consultas e custo.
 
-Para produção:
+Se quiser uma verificação periódica adicional:
 
-    TELEGRAM_MODE=webhook
-    WEBHOOK_BASE_URL=https://seu-dominio.com
-    TELEGRAM_WEBHOOK_SECRET=um-segredo-forte
+    FALLBACK_POLLER_ENABLED=true
+    POLL_INTERVAL_MINUTES=120
+    POLL_TRACKING_DAYS=30
 
-O endpoint usado será /telegram/webhook.
+Antes de ativar, confira a cota e a política de cobrança do provedor escolhido.
 
-Para testes locais, polling é mais simples.
+## Alerta de rastreio parado
+
+Padrão:
+
+    STALE_AFTER_HOURS=72
+    STALE_MONITOR_ENABLED=true
+    STALE_CHECK_INTERVAL_MINUTES=60
+
+O alerta é deduplicado. Se a encomenda continuar parada no mesmo evento, o usuário não recebe a mesma mensagem repetidamente. Uma nova movimentação reinicia o ciclo.
 
 ## API própria
 
-Defina PUBLIC_API_TOKEN.
+Defina:
+
+    PUBLIC_API_TOKEN=
 
 Consulta:
 
     GET /api/v1/track/NM123456789BR
     Authorization: Bearer SEU_TOKEN
 
-A API só consulta códigos que já existem no banco do bot, evitando usar a cota externa como API pública irrestrita.
+A resposta inclui status, transportadora, histórico, tempo desde a última atualização e indicador stale.
 
-## Administração
+## Banco
 
-Defina IDs numéricos separados por vírgula:
+Desenvolvimento:
 
-    ADMIN_IDS=123456789,987654321
+    sqlite+aiosqlite:///./tracker.db
 
-Comandos:
+Produção:
 
-- /admin
-- /broadcast mensagem
+    postgresql+asyncpg://usuario:senha@host:5432/banco
+
+A tabela notification_logs é criada automaticamente e serve para deduplicar alertas operacionais, como rastreios sem atualização.
 
 ## Estrutura
 
-app/bot contém os comandos e callbacks do Telegram.
-app/providers contém integrações 17TRACK e Ship24.
-app/services contém regras de rastreio e notificações.
-app/models.py contém o banco.
-app/main.py contém FastAPI, API própria e webhooks.
-tests contém testes unitários.
+app/bot: comandos, callbacks, paginação, filtros e compartilhamento.
+app/providers: 17TRACK e Ship24.
+app/services/tracking.py: regras de rastreio.
+app/services/notifier.py: notificações de movimentação.
+app/services/monitor.py: alerta de rastreio parado e polling opcional.
+app/models.py: banco.
+app/main.py: FastAPI, API e webhooks.
+tests: testes automatizados.
 
-## Segurança
+## Observação sobre cobertura
 
-- Nenhum token é salvo no Git.
-- .env fica ignorado.
-- Webhook Telegram valida secret token.
-- Webhook 17TRACK valida assinatura.
-- Webhook Ship24 valida bearer secret.
-- API própria exige bearer token.
-- CPF/CNPJ não é coletado nesta versão.
-- Rastreios são tratados no privado do Telegram.
-
-## Cobertura
-
-Nenhum agregador garante literalmente todo código de envio existente. Algumas transportadoras exigem dados adicionais, contrato, CEP, país de destino ou credenciais. A arquitetura foi feita para receber novos adapters sem reescrever o bot.
+Nenhum agregador garante literalmente todo código existente. Algumas transportadoras exigem CPF/CNPJ, CEP, país de destino, contrato ou outras credenciais. A arquitetura usa adapters e pode receber novas integrações sem reescrever o bot inteiro.

@@ -22,10 +22,7 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
     webhook_base_url: str = ""
 
-    admin_ids_raw: str = Field(
-        default="",
-        alias="ADMIN_IDS",
-    )
+    admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
 
     seventeen_track_token: str = ""
     seventeen_track_verify_signature: bool = True
@@ -33,15 +30,25 @@ class Settings(BaseSettings):
     ship24_webhook_secret: str = ""
     webhook_shared_secret: str = ""
 
-    database_url: str = (
-        "sqlite+aiosqlite:///./tracker.db"
-    )
+    database_url: str = "sqlite+aiosqlite:///./tracker.db"
     public_api_token: str = ""
+    share_secret: str = ""
 
     default_notify_level: str = "important"
     max_active_shipments_per_user: int = 100
     rate_limit_per_minute: int = 20
     http_timeout_seconds: float = 30.0
+
+    list_page_size: int = 10
+    stale_after_hours: int = 72
+    stale_monitor_enabled: bool = True
+    stale_check_interval_minutes: int = 60
+
+    fallback_poller_enabled: bool = False
+    poll_interval_minutes: int = 120
+    poll_tracking_days: int = 30
+
+    support_url: str = ""
 
     @property
     def admin_ids(self) -> set[int]:
@@ -56,16 +63,19 @@ class Settings(BaseSettings):
     def telegram_webhook_url(self) -> str:
         if not self.webhook_base_url:
             return ""
-        return (
-            self.webhook_base_url.rstrip("/")
-            + "/telegram/webhook"
-        )
+        return self.webhook_base_url.rstrip("/") + "/telegram/webhook"
 
     @property
     def has_tracking_provider(self) -> bool:
-        return bool(
-            self.seventeen_track_token
-            or self.ship24_api_key
+        return bool(self.seventeen_track_token or self.ship24_api_key)
+
+    @property
+    def effective_share_secret(self) -> str:
+        return (
+            self.share_secret
+            or self.webhook_shared_secret
+            or self.telegram_webhook_secret
+            or self.telegram_bot_token
         )
 
 
