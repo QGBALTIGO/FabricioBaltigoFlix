@@ -90,6 +90,57 @@ def shipment_keyboard(
     return InlineKeyboardMarkup(rows)
 
 
+def history_keyboard(
+    sub_id: int,
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+
+        if page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    "◀️",
+                    callback_data=(
+                        f"history:{sub_id}:{page - 1}"
+                    ),
+                )
+            )
+
+        nav.append(
+            InlineKeyboardButton(
+                f"{page + 1}/{total_pages}",
+                callback_data="noop",
+            )
+        )
+
+        if page + 1 < total_pages:
+            nav.append(
+                InlineKeyboardButton(
+                    "▶️",
+                    callback_data=(
+                        f"history:{sub_id}:{page + 1}"
+                    ),
+                )
+            )
+
+        rows.append(nav)
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                "⬅️ Voltar ao rastreio",
+                callback_data=f"back:{sub_id}",
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(rows)
+
+
 def notify_keyboard(
     sub: Subscription,
 ) -> InlineKeyboardMarkup:

@@ -15,6 +15,7 @@ from telegram.ext import CallbackContext
 
 from app.bot.keyboards import (
     filters_keyboard,
+    history_keyboard,
     list_keyboard,
     main_menu_keyboard,
     notify_keyboard,
@@ -42,8 +43,8 @@ from app.models import (
 )
 from app.presentation import (
     format_tracking_card,
-    format_tracking_history_fallback,
-    format_tracking_history_rich_chunks,
+    format_tracking_history_fallback_page,
+    format_tracking_history_rich_page,
     format_tracking_rich_html,
 )
 from app.share import verify_share_payload
@@ -1482,27 +1483,41 @@ async def callback(
                     show_alert=True,
                 )
 
+        elif action == "back":
+            await _edit_tracking_card(
+                context,
+                query.message,
+                sub,
+            )
+
         elif action == "history":
-            # Atualiza a fonte antes de montar o histórico para
-            # aproveitar também os metadados brutos mais recentes.
-            try:
-                await service(
-                    context
-                ).refresh_shipment(
-                    session,
-                    sub.shipment,
-                )
-                sub = await service(
-                    context
-                ).get_subscription(
-                    session,
-                    user.id,
-                    sub_id,
-                )
-            except Exception:
-                log.exception(
-                    "Falha ao atualizar antes do histórico"
-                )
+            page = 0
+            if (
+                len(parts) >= 3
+                and parts[2].isdigit()
+            ):
+                page = int(parts[2])
+
+            # Only refresh when entering history. Pagination should be instant.
+            if page == 0:
+                try:
+                    await service(
+                        context
+                    ).refresh_shipment(
+                        session,
+                        sub.shipment,
+                    )
+                    sub = await service(
+                        context
+                    ).get_subscription(
+                        session,
+                        user.id,
+                        sub_id,
+                    )
+                except Exception:
+                    log.exception(
+                        "Falha ao atualizar antes do histórico"
+                    )
 
             events = await service(
                 context
@@ -1519,35 +1534,52 @@ async def callback(
                 )
                 return
 
-            chunks = (
-                format_tracking_history_rich_chunks(
+            rich_html, page, total_pages = (
+                format_tracking_history_rich_page(
                     sub,
                     sub.shipment,
                     events,
                     settings.display_timezone,
-                    events_per_chunk=5,
+                    page=page,
+                    events_per_page=4,
                 )
+            )
+            markup = history_keyboard(
+                sub.id,
+                page,
+                total_pages,
             )
 
             try:
-                for chunk in chunks:
-                    await send_rich_message(
-                        settings.telegram_bot_token,
-                        query.message.chat_id,
-                        chunk,
-                    )
+                await edit_rich_message(
+                    settings.telegram_bot_token,
+                    query.message.chat_id,
+                    query.message.message_id,
+                    rich_html,
+                    reply_markup=markup,
+                )
             except TelegramRichMessageError:
                 log.exception(
                     "Falha no histórico Rich Message; usando fallback HTML."
                 )
-                await query.message.reply_text(
-                    format_tracking_history_fallback(
+                fallback, page, total_pages = (
+                    format_tracking_history_fallback_page(
                         sub,
                         sub.shipment,
                         events,
                         settings.display_timezone,
-                    ),
+                        page=page,
+                        events_per_page=4,
+                    )
+                )
+                await query.edit_message_text(
+                    fallback,
                     parse_mode=ParseMode.HTML,
+                    reply_markup=history_keyboard(
+                        sub.id,
+                        page,
+                        total_pages,
+                    ),
                 )
 
         elif action == "explain":

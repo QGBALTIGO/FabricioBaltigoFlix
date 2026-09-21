@@ -458,7 +458,28 @@ def _history_raw_event(
     )
 
 
-def _history_event_html(
+def _history_specific_location(raw_event: dict) -> str | None:
+    location = raw_event.get("location") or {}
+    if not isinstance(location, dict):
+        return None
+
+    # Only show this extra line when it adds information beyond city/state.
+    if not any(
+        location.get(key)
+        for key in (
+            "zipcode",
+            "address",
+            "locality",
+            "number",
+            "complement",
+        )
+    ):
+        return None
+
+    return _detailed_location(raw_event)
+
+
+def _history_event_cell(
     shipment: Shipment,
     event: TrackingEvent,
     timezone_name: str,
@@ -471,18 +492,14 @@ def _history_event_html(
     source_time = _short_source_datetime(
         raw_event.get("createdAt")
     )
-    if source_time:
-        date_text = source_time
-    else:
-        date_text = _short_datetime(
+    date_text = (
+        source_time
+        or _short_datetime(
             event.event_at,
             timezone_name,
         )
-
-    title = (
-        _compact_value(raw_event.get("title"))
-        or status_label(event.status)
     )
+
     description = (
         _compact_value(raw_event.get("description"))
         or _compact_value(event.description)
@@ -491,167 +508,187 @@ def _history_event_html(
 
     origin = _clean_route(raw_event.get("from"))
     destination = _clean_route(raw_event.get("to"))
-    detailed_location = _detailed_location(raw_event)
-
-    tracker_type = _compact_value(
-        raw_event.get("trackerType")
-    )
-    tracker_code = _compact_value(
-        raw_event.get("trackingCode")
+    detailed_location = _history_specific_location(
+        raw_event
     )
     additional = _compact_value(
         raw_event.get("additionalInfo")
     )
 
-    rows = [
+    lines = [
         (
-            "<tr><td>"
             f"<b>{html.escape(status_label(event.status))}</b>"
-            "</td></tr>"
+            f"  •  <b>{html.escape(date_text)}</b>"
         ),
-        (
-            "<tr><td>"
-            f"<b>{html.escape(date_text)}</b><br>"
-            f"{html.escape(description)}"
-            "</td></tr>"
-        ),
+        html.escape(description),
     ]
 
     if origin and destination:
-        rows.append(
-            "<tr><td>"
+        lines.append(
             "📍 "
             f"<b>{html.escape(origin)}</b>"
             " → "
             f"<b>{html.escape(destination)}</b>"
-            "</td></tr>"
         )
     elif event.location:
-        rows.append(
-            "<tr><td>"
+        lines.append(
             "📍 "
             f"<b>{html.escape(str(event.location))}</b>"
-            "</td></tr>"
         )
 
     if detailed_location:
-        rows.append(
-            "<tr><td>"
+        lines.append(
             "🏢 "
-            f"{html.escape(detailed_location)}"
-            "</td></tr>"
-        )
-
-    source_parts = []
-    if tracker_type:
-        source_parts.append(tracker_type)
-    if (
-        tracker_code
-        and tracker_code != shipment.tracking_number
-    ):
-        source_parts.append(
-            f"Código {tracker_code}"
-        )
-    if source_parts:
-        rows.append(
-            "<tr><td>"
-            "🚚 "
-            f"{html.escape(' • '.join(source_parts))}"
-            "</td></tr>"
+            f"<i>{html.escape(detailed_location)}</i>"
         )
 
     if additional:
-        rows.append(
-            "<tr><td>"
+        lines.append(
             "ℹ️ "
             f"{html.escape(additional)}"
-            "</td></tr>"
         )
 
     return (
-        "<table bordered>"
-        + "".join(rows)
-        + "</table>"
+        "<tr><td>"
+        + "<br>".join(lines)
+        + "</td></tr>"
     )
 
 
-def format_tracking_history_rich_chunks(
+def format_tracking_history_rich_page(
     subscription: Subscription,
     shipment: Shipment,
     events: list[TrackingEvent],
     timezone_name: str,
     *,
-    events_per_chunk: int = 5,
-) -> list[str]:
+    page: int = 0,
+    events_per_page: int = 4,
+) -> tuple[str, int, int]:
     if not events:
-        return []
+        return "", 0, 0
+
+    events_per_page = max(
+        1,
+        events_per_page,
+    )
+    total_pages = (
+        len(events) + events_per_page - 1
+    ) // events_per_page
+    page = min(
+        max(0, page),
+        total_pages - 1,
+    )
+
+    start = page * events_per_page
+    group = events[
+        start:start + events_per_page
+    ]
 
     nickname = html.escape(
         subscription.nickname
-        or shipment.carrier_name
         or "Minha encomenda"
     )
     number = html.escape(
         shipment.tracking_number
     )
-    carrier = html.escape(
-        shipment.carrier_name
-        or "Transportadora"
+
+    _, _, eta, _ = extract_tracking_metadata(
+        shipment,
+        None,
     )
 
-    chunks: list[str] = []
-    total_chunks = (
-        len(events) + events_per_chunk - 1
-    ) // events_per_chunk
+    page_text = (
+        f" • <i>{page + 1}/{total_pages}</i>"
+        if total_pages > 1
+        else ""
+    )
 
-    for index in range(0, len(events), events_per_chunk):
-        page = index // events_per_chunk + 1
-        group = events[
-            index:index + events_per_chunk
-        ]
-
-        page_label = (
-            f" • {page}/{total_chunks}"
-            if total_chunks > 1
-            else ""
+    second_line = (
+        f"🔎 <code>{number}</code>"
+    )
+    if eta:
+        second_line += (
+            "  •  📅 "
+            f"<b>{html.escape(eta)}</b>"
         )
 
-        top = (
-            "<aside>"
-            f"📋 <b>Histórico{page_label}</b><br>"
-            f"🔎 <code>{number}</code><br>"
-            f"<i>{nickname}</i><br>"
-            f"🚚 {carrier}"
-            "</aside>"
-        )
+    top = (
+        "<aside>"
+        f"📋 <b>Histórico</b> • <i>{nickname}</i>"
+        f"{page_text}<br>"
+        f"{second_line}"
+        "</aside>"
+    )
 
-        body = "<br>".join(
-            _history_event_html(
+    table = (
+        "<table bordered>"
+        + "".join(
+            _history_event_cell(
                 shipment,
                 event,
                 timezone_name,
             )
             for event in group
         )
+        + "</table>"
+    )
 
-        chunks.append(top + body)
-
-    return chunks
+    return top + table, page, total_pages
 
 
-def format_tracking_history_fallback(
+def format_tracking_history_fallback_page(
     subscription: Subscription,
     shipment: Shipment,
     events: list[TrackingEvent],
     timezone_name: str,
-) -> str:
+    *,
+    page: int = 0,
+    events_per_page: int = 4,
+) -> tuple[str, int, int]:
+    if not events:
+        return "", 0, 0
+
+    total_pages = (
+        len(events) + events_per_page - 1
+    ) // events_per_page
+    page = min(
+        max(0, page),
+        total_pages - 1,
+    )
+    start = page * events_per_page
+    group = events[
+        start:start + events_per_page
+    ]
+
+    _, _, eta, _ = extract_tracking_metadata(
+        shipment,
+        None,
+    )
+
+    title = (
+        "📋 <b>Histórico</b> • "
+        f"<i>{html.escape(subscription.nickname or 'Minha encomenda')}</i>"
+    )
+    if total_pages > 1:
+        title += (
+            f" • {page + 1}/{total_pages}"
+        )
+
     lines = [
-        "📋 <b>Histórico</b>",
-        f"<code>{html.escape(shipment.tracking_number)}</code>",
+        title,
+        (
+            f"🔎 <code>{html.escape(shipment.tracking_number)}</code>"
+            + (
+                " • 📅 "
+                + html.escape(eta)
+                if eta
+                else ""
+            )
+        ),
         "",
     ]
 
-    for event in events[:25]:
+    for event in group:
         raw_event = _history_raw_event(
             shipment,
             event,
@@ -667,12 +704,18 @@ def format_tracking_history_fallback(
             )
         )
 
+        description = (
+            _compact_value(raw_event.get("description"))
+            or event.description
+            or "Movimentação registrada"
+        )
+
         lines.append(
             f"<b>{html.escape(status_label(event.status))}</b>"
+            f" • <b>{html.escape(time_text)}</b>"
         )
         lines.append(
-            f"{html.escape(time_text)} — "
-            f"{html.escape(event.description or 'Movimentação registrada')}"
+            html.escape(description)
         )
 
         origin = _clean_route(
@@ -694,7 +737,7 @@ def format_tracking_history_fallback(
                 + html.escape(event.location)
             )
 
-        detailed = _detailed_location(
+        detailed = _history_specific_location(
             raw_event
         )
         if detailed:
@@ -714,4 +757,4 @@ def format_tracking_history_fallback(
 
         lines.append("")
 
-    return "\n".join(lines)[:3900]
+    return "\n".join(lines)[:3900], page, total_pages
