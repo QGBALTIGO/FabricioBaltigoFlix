@@ -37,6 +37,9 @@ from app.services.archive import (
     archive_cutoff,
     delivered_reference_sql,
 )
+from app.services.telemetry import (
+    record_operational_event,
+)
 from app.status import normalize_status
 from app.utils import event_hash, normalize_tracking_number
 
@@ -684,10 +687,27 @@ class TrackingService:
                 .provider_query_timeout_seconds
             ),
         )
+        loop = asyncio.get_running_loop()
 
         async def fetch_candidate(
             provider: Any,
         ):
+            started = loop.time()
+
+            def elapsed_ms() -> int:
+                return max(
+                    0,
+                    int(
+                        round(
+                            (
+                                loop.time()
+                                - started
+                            )
+                            * 1000
+                        )
+                    ),
+                )
+
             try:
                 semaphore = (
                     self._provider_semaphores
@@ -717,6 +737,7 @@ class TrackingService:
                     data,
                     None,
                     False,
+                    elapsed_ms(),
                 )
             except ProviderNotFound as exc:
                 return (
@@ -724,6 +745,7 @@ class TrackingService:
                     None,
                     exc,
                     True,
+                    elapsed_ms(),
                 )
             except asyncio.TimeoutError:
                 return (
@@ -733,6 +755,7 @@ class TrackingService:
                         "Tempo limite excedido na consulta."
                     ),
                     False,
+                    elapsed_ms(),
                 )
             except ProviderUnavailable as exc:
                 return (
@@ -740,6 +763,7 @@ class TrackingService:
                     None,
                     exc,
                     False,
+                    elapsed_ms(),
                 )
             except Exception as exc:
                 return (
@@ -747,6 +771,7 @@ class TrackingService:
                     None,
                     exc,
                     False,
+                    elapsed_ms(),
                 )
 
         results = await asyncio.gather(
@@ -768,10 +793,31 @@ class TrackingService:
             data,
             error,
             healthy_not_found,
+            duration_ms,
         ) in results:
             row = health_by_name[
                 provider.name
             ]
+            healthy = (
+                data is not None
+                or healthy_not_found
+            )
+            await record_operational_event(
+                session,
+                kind="provider_query",
+                name=provider.name,
+                ok=healthy,
+                duration_ms=duration_ms,
+                detail=(
+                    "not_found"
+                    if healthy_not_found
+                    else (
+                        type(error).__name__
+                        if error is not None
+                        else None
+                    )
+                ),
+            )
 
             if data is not None:
                 self._mark_provider_success(
@@ -817,8 +863,29 @@ class TrackingService:
                     data,
                     error,
                     healthy_not_found,
+                    duration_ms,
                 ) = await fetch_candidate(
                     fallback_provider
+                )
+
+                await record_operational_event(
+                    session,
+                    kind="provider_query",
+                    name=provider.name,
+                    ok=(
+                        data is not None
+                        or healthy_not_found
+                    ),
+                    duration_ms=duration_ms,
+                    detail=(
+                        "not_found"
+                        if healthy_not_found
+                        else (
+                            type(error).__name__
+                            if error is not None
+                            else None
+                        )
+                    ),
                 )
 
                 if data is not None:
