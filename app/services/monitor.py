@@ -287,20 +287,22 @@ async def _poll_shipments(
     async def process_one(
         shipment_id: int,
     ) -> tuple[int, int]:
-        async with semaphore:
-            try:
-                async with SessionLocal() as session:
-                    shipment = await session.get(
-                        Shipment,
-                        shipment_id,
-                    )
+        try:
+            async with SessionLocal() as session:
+                shipment = await session.get(
+                    Shipment,
+                    shipment_id,
+                )
 
-                    if (
-                        not shipment
-                        or not shipment.is_active
-                    ):
-                        return 0, 0
+                if (
+                    not shipment
+                    or not shipment.is_active
+                ):
+                    return 0, 0
 
+                # O slot limita apenas a consulta externa. O fanout de
+                # Telegram e a fila silenciosa não bloqueiam novas consultas.
+                async with semaphore:
                     _, new_events = (
                         await tracking_service
                         .refresh_with_events(
@@ -309,35 +311,34 @@ async def _poll_shipments(
                         )
                     )
 
-                    notified = 0
-                    if new_events:
-                        notified = (
-                            await notify_new_events(
-                                session,
-                                bot,
-                                shipment,
-                                new_events,
-                            )
+                    if (
+                        settings.poll_request_spacing_seconds
+                        > 0
+                    ):
+                        await asyncio.sleep(
+                            settings
+                            .poll_request_spacing_seconds
                         )
 
-                    return 1, notified
-
-            except Exception:
-                log.exception(
-                    "Falha no polling do rastreio %s",
-                    shipment_id,
-                )
-                return 0, 0
-
-            finally:
-                if (
-                    settings.poll_request_spacing_seconds
-                    > 0
-                ):
-                    await asyncio.sleep(
-                        settings
-                        .poll_request_spacing_seconds
+                notified = 0
+                if new_events:
+                    notified = (
+                        await notify_new_events(
+                            session,
+                            bot,
+                            shipment,
+                            new_events,
+                        )
                     )
+
+                return 1, notified
+
+        except Exception:
+            log.exception(
+                "Falha no polling do rastreio %s",
+                shipment_id,
+            )
+            return 0, 0
 
     results = await asyncio.gather(
         *(
