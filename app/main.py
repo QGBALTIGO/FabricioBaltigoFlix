@@ -136,6 +136,13 @@ async def lifespan(app: FastAPI):
                 allowed_updates=(
                     Update.ALL_TYPES
                 ),
+                max_connections=min(
+                    100,
+                    max(
+                        1,
+                        settings.telegram_webhook_max_connections,
+                    ),
+                ),
             )
 
         else:
