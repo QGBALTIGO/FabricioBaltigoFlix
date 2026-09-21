@@ -81,3 +81,12 @@ def test_ocr_pipeline_returns_engine_text(monkeypatch):
 
     assert "Shopee" in text
     assert "AB123456789BR" in text
+
+
+def test_explicit_numeric_tracking_code_is_allowed():
+    items = intake.extract_tracking_candidates(
+        "Código de rastreio: 12345678901234",
+    )
+
+    assert items
+    assert items[0].number == "12345678901234"
