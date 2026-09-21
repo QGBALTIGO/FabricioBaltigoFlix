@@ -36,6 +36,12 @@ class DeliveryEstimate:
     source: str
 
 
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _percentile(values: list[float], fraction: float) -> float:
     if not values:
         return 0.0
@@ -99,7 +105,10 @@ async def estimate_delivery_window(
     for _, status_at, delivered_at in rows:
         if not status_at or not delivered_at:
             continue
-        delta = (delivered_at - status_at).total_seconds()
+        delta = (
+            _aware_utc(delivered_at)
+            - _aware_utc(status_at)
+        ).total_seconds()
         if 30 * 60 <= delta <= 45 * 24 * 3600:
             remaining_seconds.append(float(delta))
 
@@ -126,7 +135,10 @@ async def estimate_delivery_window(
         for registered_at, delivered_at in total_rows:
             if not registered_at or not delivered_at:
                 continue
-            delta = (delivered_at - registered_at).total_seconds()
+            delta = (
+                _aware_utc(delivered_at)
+                - _aware_utc(registered_at)
+            ).total_seconds()
             if 2 * 3600 <= delta <= 60 * 24 * 3600:
                 remaining_seconds.append(float(delta))
         source = "carrier_total"
@@ -139,9 +151,13 @@ async def estimate_delivery_window(
     elapsed = 0.0
     if source == "status" and reference:
         ref = reference
-        if ref.tzinfo is None:
-            ref = ref.replace(tzinfo=timezone.utc)
-        elapsed = max(0.0, (now - ref.astimezone(timezone.utc)).total_seconds())
+        elapsed = max(
+            0.0,
+            (
+                now
+                - _aware_utc(ref)
+            ).total_seconds(),
+        )
 
     low = max(60 * 60, _percentile(remaining_seconds, 0.30) - elapsed)
     high = max(low, _percentile(remaining_seconds, 0.70) - elapsed)
@@ -220,6 +236,10 @@ def package_bucket(
 
     if shipment.status == "delivered":
         current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(
+                tzinfo=timezone.utc
+            )
         try:
             tz = ZoneInfo(timezone_name)
         except Exception:
