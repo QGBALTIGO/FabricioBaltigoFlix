@@ -54,7 +54,11 @@ def test_add_package_help_is_clear_and_has_back():
 
     assert "AB123456789BR" in text
     assert "Teclado gamer" in text
-    assert "nome é opcional" in text
+    assert "Encaminhar a mensagem" in text
+    assert "Enviar uma foto" in text
+    assert "QR Code" in text
+    assert "código de barras" in text
+    assert "Nada é salvo sem sua confirmação" in text
     assert (
         markup.inline_keyboard[0][0].callback_data
         == "packages:back"
