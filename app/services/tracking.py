@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -277,32 +278,166 @@ class TrackingService:
                 deduped.append(provider)
         return deduped
 
+    @classmethod
+    def _provider_freshness_key(
+        cls,
+        data: ProviderTracking,
+    ) -> tuple[datetime, int, int]:
+        latest = datetime.min.replace(
+            tzinfo=timezone.utc
+        )
+
+        if data.events:
+            latest_event = max(
+                data.events,
+                key=lambda item: (
+                    cls._as_utc(item.event_at)
+                    or datetime.min.replace(
+                        tzinfo=timezone.utc
+                    )
+                ),
+            )
+            latest = (
+                cls._as_utc(latest_event.event_at)
+                or latest
+            )
+
+        # On an exact timestamp tie, prefer the result with
+        # more history. For Correios, prefer the direct source
+        # because it usually reflects the official feed sooner.
+        direct_bonus = (
+            1
+            if data.provider == "correios_direct"
+            else 0
+        )
+        return (
+            latest,
+            len(data.events),
+            direct_bonus,
+        )
+
     async def _query_best_provider(
         self,
         session: AsyncSession,
         shipment: Shipment,
     ) -> ProviderTracking | None:
-        for provider in self._candidate_providers(shipment):
-            if await self._provider_quarantined(session, provider.name):
-                continue
+        candidates: list[Any] = []
 
-            try:
-                data = await self._query_provider(provider, shipment)
-                await self._record_provider_success(session, provider.name)
-                return data
-            except ProviderNotFound:
-                # A source está saudável; apenas não conhece esse código.
+        for provider in self._candidate_providers(
+            shipment
+        ):
+            if await self._provider_quarantined(
+                session,
+                provider.name,
+            ):
                 continue
+            candidates.append(provider)
+
+        if not candidates:
+            return None
+
+        timeout = max(
+            3.0,
+            float(
+                self.settings
+                .provider_query_timeout_seconds
+            ),
+        )
+
+        async def fetch_candidate(
+            provider: Any,
+        ):
+            try:
+                data = await asyncio.wait_for(
+                    self._query_provider(
+                        provider,
+                        shipment,
+                    ),
+                    timeout=timeout,
+                )
+                return (
+                    provider,
+                    data,
+                    None,
+                    False,
+                )
+            except ProviderNotFound as exc:
+                return (
+                    provider,
+                    None,
+                    exc,
+                    True,
+                )
+            except asyncio.TimeoutError:
+                return (
+                    provider,
+                    None,
+                    ProviderUnavailable(
+                        "Tempo limite excedido na consulta."
+                    ),
+                    False,
+                )
             except ProviderUnavailable as exc:
-                await self._record_provider_failure(
-                    session, provider.name, str(exc)
+                return (
+                    provider,
+                    None,
+                    exc,
+                    False,
                 )
             except Exception as exc:
-                await self._record_provider_failure(
-                    session, provider.name, str(exc)
+                return (
+                    provider,
+                    None,
+                    exc,
+                    False,
                 )
 
-        return None
+        results = await asyncio.gather(
+            *(
+                fetch_candidate(provider)
+                for provider in candidates
+            )
+        )
+
+        available: list[ProviderTracking] = []
+
+        for (
+            provider,
+            data,
+            error,
+            healthy_not_found,
+        ) in results:
+            if data is not None:
+                await self._record_provider_success(
+                    session,
+                    provider.name,
+                )
+                available.append(data)
+                continue
+
+            if healthy_not_found:
+                # The source answered normally; it simply does
+                # not know this code. This is not a provider failure.
+                await self._record_provider_success(
+                    session,
+                    provider.name,
+                )
+                continue
+
+            if error is not None:
+                await self._record_provider_failure(
+                    session,
+                    provider.name,
+                    str(error),
+                )
+
+        if not available:
+            return None
+
+        return max(
+            available,
+            key=self._provider_freshness_key,
+        )
 
     async def _query_provider(
         self,

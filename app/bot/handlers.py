@@ -1558,6 +1558,27 @@ async def callback(
             return
 
         if action == "open":
+            # Opening a package should show fresh data, not only
+            # whatever was cached by the last background poll.
+            try:
+                await service(
+                    context
+                ).refresh_shipment(
+                    session,
+                    sub.shipment,
+                )
+                sub = await service(
+                    context
+                ).get_subscription(
+                    session,
+                    user.id,
+                    sub_id,
+                )
+            except Exception:
+                log.exception(
+                    "Falha ao atualizar rastreio ao abrir pacote"
+                )
+
             await _edit_tracking_card(
                 context,
                 query.message,
