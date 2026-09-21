@@ -45,3 +45,14 @@ def test_parse_tracking_input_rejects_bad_code():
     assert parse_tracking_input(
         "isso não é um código"
     ) == (None, None)
+
+
+def test_handler_exposes_tracking_input_parser():
+    from app.bot import handlers
+
+    assert handlers.parse_tracking_input(
+        "AP499229999BR Placa 10k"
+    ) == (
+        "AP499229999BR",
+        "Placa 10k",
+    )
