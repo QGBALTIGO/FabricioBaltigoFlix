@@ -1204,9 +1204,7 @@ async def config_cmd(
                 "e use <b>⚙️ Alertas</b> para escolher quais "
                 "movimentações quer receber.\n\n"
                 "Você pode separar saída para entrega, problemas, "
-                "entrega concluída e movimentações intermediárias. "
-                "Também há horários silenciosos; nesse período os "
-                "avisos ficam guardados e chegam depois.\n\n"
+                "entrega concluída e movimentações intermediárias.\n\n"
                 "⚠️ O bot também pode avisar quando uma encomenda "
                 f"fica {days}+ dia(s) sem movimentação."
             ),
