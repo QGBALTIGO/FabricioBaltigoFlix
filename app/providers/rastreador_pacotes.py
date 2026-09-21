@@ -5,6 +5,8 @@ from typing import Any
 
 import httpx
 
+from app.http_client import get_provider_http_client
+
 from app.providers.base import (
     ProviderEvent,
     ProviderNotFound,
@@ -207,12 +209,11 @@ class RastreadorPacotesProvider:
             )
 
         try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout
-            ) as client:
-                response = await client.get(
-                    f"{self.endpoint}/{number}",
-                    headers={
+            client = await get_provider_http_client()
+            response = await client.get(
+                f"{self.endpoint}/{number}",
+                timeout=self.timeout,
+                headers={
                         "Accept": "application/json",
                         "User-Agent": (
                             "Mozilla/5.0 "
@@ -221,8 +222,8 @@ class RastreadorPacotesProvider:
                             "(KHTML, like Gecko) "
                             "Chrome/124.0.0.0 Safari/537.36"
                         ),
-                    },
-                )
+                },
+            )
             response.raise_for_status()
             data = response.json()
         except (httpx.HTTPError, ValueError) as exc:
