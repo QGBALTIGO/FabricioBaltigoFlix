@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -109,3 +111,111 @@ async def notify_new_events(
 
     await session.commit()
     return sent
+
+
+
+async def send_admin_notification_previews() -> tuple[int | None, int | None]:
+    if not settings.admin_ids:
+        log.warning(
+            "Prévia de notificações ignorada: nenhum ADMIN_IDS configurado."
+        )
+        return None, None
+
+    chat_id = sorted(settings.admin_ids)[0]
+
+    sub = SimpleNamespace(
+        nickname="Placa 100k",
+    )
+
+    real_shipment = SimpleNamespace(
+        tracking_number="AP499229999BR",
+        carrier_name="Correios",
+        extra_json=json.dumps(
+            {
+                "estimatedDelivery": "2026-10-06",
+                "tracking": [
+                    {
+                        "Posicoes": [
+                            {
+                                "Acao": (
+                                    "Objeto em transferência - por favor aguarde"
+                                ),
+                                "Data": "2026-09-21 08:49:19",
+                                "Detalhes": "",
+                                "DetalhesFormatado": (
+                                    "Objeto em transferência - por favor aguarde\n\r"
+                                    "Saiu de Unidade de Tratamento em CURITIBA / PR "
+                                    "para Unidade de Tratamento em CAMPO GRANDE / MS"
+                                ),
+                            }
+                        ]
+                    }
+                ],
+            }
+        ),
+    )
+    real_event = SimpleNamespace(
+        status="in_transit",
+        event_at="2026-09-21T08:49:19-03:00",
+        description=(
+            "Objeto em transferência - por favor aguarde"
+        ),
+        location="Unidade de Tratamento - CURITIBA/PR",
+    )
+
+    delivered_shipment = SimpleNamespace(
+        tracking_number="AP499229999BR",
+        carrier_name="Correios",
+        extra_json=json.dumps(
+            {
+                "trackingEvents": [
+                    {
+                        "createdAt": "2026-09-22 14:32:00",
+                        "description": "Objeto entregue ao destinatário",
+                        "from": (
+                            "Unidade de Distribuição - CAMPO GRANDE/MS"
+                        ),
+                        "to": "Destinatário",
+                    }
+                ],
+            }
+        ),
+    )
+    delivered_event = SimpleNamespace(
+        status="delivered",
+        event_at="2026-09-22T14:32:00-03:00",
+        description="Objeto entregue ao destinatário",
+        location="CAMPO GRANDE/MS",
+    )
+
+    result_1 = await send_rich_message(
+        settings.telegram_bot_token,
+        chat_id,
+        format_tracking_notification_rich_html(
+            sub,
+            real_shipment,
+            real_event,
+            settings.display_timezone,
+        ),
+    )
+    result_2 = await send_rich_message(
+        settings.telegram_bot_token,
+        chat_id,
+        format_tracking_notification_rich_html(
+            sub,
+            delivered_shipment,
+            delivered_event,
+            settings.display_timezone,
+        ),
+    )
+
+    message_1 = result_1.get("message_id")
+    message_2 = result_2.get("message_id")
+
+    log.info(
+        "Admin notification previews sent: real=%s delivered=%s",
+        message_1,
+        message_2,
+    )
+
+    return message_1, message_2

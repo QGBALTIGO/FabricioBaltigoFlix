@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     required_channel_url: str = "https://t.me/GeekHunter_Br"
 
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
+    admin_preview_notifications_on_startup: bool = False
 
     # Primary free tracking source.
     melhor_rastreio_enabled: bool = True

@@ -38,7 +38,10 @@ from app.providers.seventeen_track import (
 from app.providers.ship24 import Ship24Provider
 from app.ratelimit import SlidingWindowLimiter
 from app.services.monitor import monitoring_loop
-from app.services.notifier import notify_new_events
+from app.services.notifier import (
+    notify_new_events,
+    send_admin_notification_previews,
+)
 from app.services.tracking import TrackingService
 from app.status import status_label
 from app.utils import (
@@ -91,6 +94,14 @@ async def lifespan(app: FastAPI):
         await telegram_app.initialize()
         await telegram_app.start()
         await set_commands(telegram_app)
+
+        if settings.admin_preview_notifications_on_startup:
+            try:
+                await send_admin_notification_previews()
+            except Exception:
+                log.exception(
+                    "Falha ao enviar prévias de notificação ao admin"
+                )
 
         if (
             settings.telegram_mode.lower()
