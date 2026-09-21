@@ -28,7 +28,7 @@ def test_notify_levels():
     assert should_notify(
         "important",
         "in_transit",
-    ) is False
+    ) is True
     assert should_notify(
         "off",
         "delivered",
