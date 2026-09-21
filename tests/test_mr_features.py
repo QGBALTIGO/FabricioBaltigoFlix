@@ -33,6 +33,6 @@ def test_security_signal_and_explanation():
         "Objeto encaminhado para unidade"
     )
     assert (
-        "canal oficial"
+        "canais oficiais"
         in status_explanation("customs").lower()
     )
