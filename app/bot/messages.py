@@ -1,33 +1,73 @@
-WELCOME = """📦 <b>Bem-vindo, {name}!</b>
+WELCOME = """📦 <b>Melhor Rastreio</b>
 
-Para rastrear uma encomenda, envie o código dela. Se quiser adicionar um nome, digite o código e o nome juntos.
+Olá, <b>{name}</b>! 👋
+Acompanhe suas encomendas de forma simples e receba as novas movimentações direto por aqui.
 
-<b>Exemplo:</b>
-<code>PN123456789BR Minha encomenda 😊🚚</code>
+<b>🔎 Como rastrear</b>
 
-Escolha uma opção no menu abaixo:
+Envie apenas o código:
+<code>AP499229999BR</code>
 
-• Envie um código de rastreio para cadastrar
-• Use "📦 Meus pacotes" para consultar status
-• Use "🗑 Remover pacote" para excluir um código"""
+Ou dê um nome ao pacote:
+<code>AP499229999BR Placa 10k</code>
 
-HELP = """🆘 <b>Como usar</b>
+<blockquote>💡 É só enviar a mensagem. Não precisa usar /comando.</blockquote>
 
-Envie o código de rastreio diretamente no chat.
+<b>📂 Seu painel</b>
+📦 <b>Meus pacotes</b> — consulte seus rastreios salvos
+🗑 <b>Remover pacote</b> — exclua um código da sua lista
 
-Se quiser dar um nome ao pacote, escreva o código e o nome na mesma mensagem:
+<blockquote expandable><b>🚚 Principais transportadoras compatíveis</b>
 
-<code>PN123456789BR Minha encomenda 😊🚚</code>
+• Correios
+• J&T Express
+• Jadlog
+• Loggi
+• LATAM Cargo
+• Azul Cargo
+• Buslog
+• Viação Mundo
+• Melhor Envio
+• Total Express
 
-Depois use os botões do menu:
-• 📦 Meus pacotes — consultar seus rastreios
-• 🗑 Remover pacote — excluir um código salvo
+<i>A transportadora é identificada automaticamente sempre que possível.</i></blockquote>
 
-O bot busca automaticamente e avisa quando houver novas movimentações."""
+<b>Pronto para começar?</b>
+Envie seu código de rastreio abaixo. 🚚✨"""
+
+HELP = """🆘 <b>Como usar o Melhor Rastreio</b>
+
+<b>🔎 Novo rastreio</b>
+Envie o código diretamente no chat:
+<code>AP499229999BR</code>
+
+Se quiser, adicione um nome depois do código:
+<code>AP499229999BR Minha encomenda</code>
+
+<blockquote>O bot identifica a transportadora, consulta o pacote e salva o rastreio automaticamente.</blockquote>
+
+<b>📂 Menu</b>
+📦 <b>Meus pacotes</b> — consultar rastreios salvos
+🗑 <b>Remover pacote</b> — excluir um código
+
+<blockquote expandable><b>🚚 Transportadoras</b>
+
+• Correios
+• J&T Express
+• Jadlog
+• Loggi
+• LATAM Cargo
+• Azul Cargo
+• Buslog
+• Viação Mundo
+• Melhor Envio
+• Total Express</blockquote>
+
+🔔 Quando os alertas estiverem ativos, você recebe novas movimentações automaticamente."""
 
 SECURITY = """🛡 <b>Rastreio seguro</b>
 
-• O Rastreio Baltigo não envia PIX, boleto ou link de cobrança para liberar encomendas.
+• O Melhor Rastreio não envia PIX, boleto ou link de cobrança para liberar encomendas.
 • Não faça pagamentos por links recebidos por SMS, WhatsApp, e-mail ou anúncio sem confirmar no canal oficial da loja, transportadora ou órgão responsável.
 • Cobranças fiscais legítimas podem existir em alguns envios; confirme sempre diretamente no canal oficial antes de pagar.
 • Nunca envie senha, código de autenticação ou dados bancários pelo chat do bot.
@@ -38,9 +78,10 @@ NO_SHIPMENTS = """📭 <b>Nenhuma encomenda ativa.</b>
 
 Envie um código de rastreio para começar."""
 
-INVALID_CODE = """❌ Não reconheci um código de rastreio válido.
+INVALID_CODE = """❌ <b>Não encontrei um código de rastreio válido.</b>
 
-Envie o código sozinho ou junto com um nome.
+Envie o código sozinho:
+<code>AP499229999BR</code>
 
-<b>Exemplo:</b>
-<code>PN123456789BR Minha encomenda 😊🚚</code>"""
+Ou junto com um nome:
+<code>AP499229999BR Minha encomenda</code>"""
