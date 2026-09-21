@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -132,8 +133,26 @@ class TrackingService:
             first_name=first_name,
         )
         session.add(user)
-        await session.flush()
-        return user
+
+        try:
+            await session.flush()
+            return user
+        except IntegrityError:
+            # Outra requisição/réplica criou o mesmo usuário.
+            await session.rollback()
+            existing = await session.scalar(
+                select(User).where(
+                    User.telegram_id
+                    == telegram_id
+                )
+            )
+            if existing is None:
+                raise
+            existing.username = username
+            existing.first_name = (
+                first_name
+            )
+            return existing
 
     async def _check_user_limit(
         self,
@@ -190,20 +209,58 @@ class TrackingService:
         warning = None
 
         if shipment is None:
-            await self._check_user_limit(session, user.id)
-            shipment = Shipment(tracking_number=number)
+            await self._check_user_limit(
+                session,
+                user.id,
+            )
+            shipment = Shipment(
+                tracking_number=number
+            )
             session.add(shipment)
-            await session.flush()
 
-            provider_data = await self._query_best_provider(session, shipment)
-            if provider_data:
-                await self._apply_provider_data(session, shipment, provider_data)
-            else:
-                warning = (
-                    "Código salvo. Ainda não encontrei movimentações nas fontes "
-                    "disponíveis; vou continuar verificando automaticamente."
+            try:
+                await session.flush()
+            except IntegrityError:
+                # Outra requisição/réplica venceu a corrida.
+                await session.rollback()
+                shipment = await session.scalar(
+                    select(Shipment).where(
+                        Shipment.tracking_number
+                        == number
+                    )
                 )
-            await self._schedule_next_poll(session, shipment)
+                if shipment is None:
+                    raise
+                created = False
+
+            if created:
+                provider_data = (
+                    await self._query_best_provider(
+                        session,
+                        shipment,
+                    )
+                )
+                if provider_data:
+                    await self._apply_provider_data(
+                        session,
+                        shipment,
+                        provider_data,
+                    )
+                else:
+                    warning = (
+                        "Código salvo. Ainda não encontrei movimentações "
+                        "nas fontes disponíveis; vou continuar verificando "
+                        "automaticamente."
+                    )
+                await self._schedule_next_poll(
+                    session,
+                    shipment,
+                )
+            else:
+                await self.refresh_if_stale(
+                    session,
+                    shipment,
+                )
         else:
             # Reutiliza uma consulta recente para evitar tempestade de
             # requests quando vários usuários abrem/adicionam o mesmo código.
@@ -235,9 +292,39 @@ class TrackingService:
             if nickname:
                 subscription.nickname = nickname
 
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            # A mesma assinatura pode ter sido criada em outra réplica.
+            await session.rollback()
+            subscription = await session.scalar(
+                select(Subscription)
+                .options(
+                    selectinload(
+                        Subscription.shipment
+                    )
+                )
+                .where(
+                    Subscription.user_id
+                    == user.id,
+                    Subscription.shipment_id
+                    == shipment.id,
+                )
+            )
+            if subscription is None:
+                raise
+
+            subscription.is_active = True
+            if nickname:
+                subscription.nickname = (
+                    nickname
+                )
+            await session.commit()
+
         subscription = await self.get_subscription(
-            session, user.id, subscription.id
+            session,
+            user.id,
+            subscription.id,
         )
         return AddResult(
             subscription=subscription,
