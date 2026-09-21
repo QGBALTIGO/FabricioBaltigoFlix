@@ -365,22 +365,129 @@ class TrackingService:
             direct_bonus,
         )
 
+    @staticmethod
+    def _mark_provider_success(
+        row: ProviderHealth,
+    ) -> None:
+        row.consecutive_failures = 0
+        row.quarantined_until = None
+        row.last_success_at = (
+            datetime.now(timezone.utc)
+        )
+        row.last_error = None
+
+    @staticmethod
+    def _mark_provider_failure(
+        row: ProviderHealth,
+        error: str,
+    ) -> None:
+        row.consecutive_failures += 1
+        row.last_failure_at = (
+            datetime.now(timezone.utc)
+        )
+        row.last_error = (
+            error
+            or "erro desconhecido"
+        )[:500]
+
+        failures = (
+            row.consecutive_failures
+        )
+        quarantine = None
+
+        if failures >= 12:
+            quarantine = timedelta(
+                hours=24
+            )
+        elif failures >= 6:
+            quarantine = timedelta(
+                hours=6
+            )
+        elif failures >= 3:
+            quarantine = timedelta(
+                hours=1
+            )
+
+        if quarantine:
+            row.quarantined_until = (
+                datetime.now(timezone.utc)
+                + quarantine
+            )
+
     async def _query_best_provider(
         self,
         session: AsyncSession,
         shipment: Shipment,
     ) -> ProviderTracking | None:
+        raw_candidates = (
+            self._candidate_providers(
+                shipment
+            )
+        )
+
+        if not raw_candidates:
+            return None
+
+        names = [
+            provider.name
+            for provider in raw_candidates
+        ]
+
+        rows = list(
+            (
+                await session.scalars(
+                    select(
+                        ProviderHealth
+                    ).where(
+                        ProviderHealth.provider
+                        .in_(names)
+                    )
+                )
+            ).all()
+        )
+
+        health_by_name = {
+            row.provider: row
+            for row in rows
+        }
+
+        for name in names:
+            if name not in health_by_name:
+                row = ProviderHealth(
+                    provider=name
+                )
+                session.add(row)
+                health_by_name[
+                    name
+                ] = row
+
+        await session.flush()
+
+        now = datetime.now(
+            timezone.utc
+        )
         candidates: list[Any] = []
 
-        for provider in self._candidate_providers(
-            shipment
-        ):
-            if await self._provider_quarantined(
-                session,
-                provider.name,
+        for provider in raw_candidates:
+            row = health_by_name[
+                provider.name
+            ]
+            until = self._as_utc(
+                row.quarantined_until
+            )
+
+            if (
+                until
+                and until > now
             ):
                 continue
-            candidates.append(provider)
+
+            candidates.append(
+                provider
+            )
+
+        # Libera a conexão do Postgres enquanto esperamos I/O externo.
+        await session.commit()
 
         if not candidates:
             return None
@@ -443,12 +550,17 @@ class TrackingService:
 
         results = await asyncio.gather(
             *(
-                fetch_candidate(provider)
-                for provider in candidates
+                fetch_candidate(
+                    provider
+                )
+                for provider
+                in candidates
             )
         )
 
-        available: list[ProviderTracking] = []
+        available: list[
+            ProviderTracking
+        ] = []
 
         for (
             provider,
@@ -456,29 +568,32 @@ class TrackingService:
             error,
             healthy_not_found,
         ) in results:
+            row = health_by_name[
+                provider.name
+            ]
+
             if data is not None:
-                await self._record_provider_success(
-                    session,
-                    provider.name,
+                self._mark_provider_success(
+                    row
                 )
-                available.append(data)
+                available.append(
+                    data
+                )
                 continue
 
             if healthy_not_found:
-                # The source answered normally; it simply does
-                # not know this code. This is not a provider failure.
-                await self._record_provider_success(
-                    session,
-                    provider.name,
+                self._mark_provider_success(
+                    row
                 )
                 continue
 
             if error is not None:
-                await self._record_provider_failure(
-                    session,
-                    provider.name,
+                self._mark_provider_failure(
+                    row,
                     str(error),
                 )
+
+        await session.flush()
 
         if not available:
             return None
@@ -490,8 +605,13 @@ class TrackingService:
 
         # Preserve ETA from another healthy source when the
         # freshest Correios feed does not provide one.
-        if isinstance(best.raw, dict):
-            if not best.raw.get("estimatedDelivery"):
+        if isinstance(
+            best.raw,
+            dict,
+        ):
+            if not best.raw.get(
+                "estimatedDelivery"
+            ):
                 for candidate in available:
                     raw = (
                         candidate.raw
