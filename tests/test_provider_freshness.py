@@ -84,12 +84,6 @@ async def test_query_best_provider_compares_all_healthy_sources(
         ],
     )
 
-    async def not_quarantined(
-        session,
-        provider_name,
-    ):
-        return False
-
     async def query_provider(
         provider,
         shipment,
@@ -98,32 +92,31 @@ async def test_query_best_provider_compares_all_healthy_sources(
             return fresh
         return stale
 
-    async def noop(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(
-        service,
-        "_provider_quarantined",
-        not_quarantined,
-    )
     monkeypatch.setattr(
         service,
         "_query_provider",
         query_provider,
     )
-    monkeypatch.setattr(
-        service,
-        "_record_provider_success",
-        noop,
-    )
-    monkeypatch.setattr(
-        service,
-        "_record_provider_failure",
-        noop,
-    )
+
+    class ScalarRows:
+        def all(self):
+            return []
+
+    class FakeSession:
+        async def scalars(self, statement):
+            return ScalarRows()
+
+        def add(self, value):
+            return None
+
+        async def flush(self):
+            return None
+
+        async def commit(self):
+            return None
 
     result = await service._query_best_provider(
-        object(),
+        FakeSession(),
         SimpleNamespace(
             tracking_number="AP499229999BR",
             carrier_code="correios",
@@ -140,7 +133,6 @@ async def test_query_best_provider_compares_all_healthy_sources(
         8,
         49,
         tzinfo=timezone(
-            # -03:00
             __import__("datetime").timedelta(
                 hours=-3
             )
