@@ -818,8 +818,16 @@ class TrackingService:
                     )
                 ),
                 context_name=(
-                    shipment.carrier_name
-                    or shipment.carrier_code
+                    getattr(
+                        shipment,
+                        "carrier_name",
+                        None,
+                    )
+                    or getattr(
+                        shipment,
+                        "carrier_code",
+                        None,
+                    )
                     or "Em detecção"
                 ),
             )
@@ -892,8 +900,16 @@ class TrackingService:
                         )
                     ),
                     context_name=(
-                        shipment.carrier_name
-                        or shipment.carrier_code
+                        getattr(
+                            shipment,
+                            "carrier_name",
+                            None,
+                        )
+                        or getattr(
+                            shipment,
+                            "carrier_code",
+                            None,
+                        )
                         or "Em detecção"
                     ),
                 )
