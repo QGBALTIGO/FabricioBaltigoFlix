@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     public_api_token: str = ""
     share_secret: str = ""
 
-    default_notify_level: str = "important"
+    default_notify_level: str = "all"
     max_active_shipments_per_user: int = 100
     rate_limit_per_minute: int = 20
     http_timeout_seconds: float = 30.0
