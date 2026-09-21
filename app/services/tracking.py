@@ -165,6 +165,13 @@ class TrackingService:
                     "disponíveis; vou continuar verificando automaticamente."
                 )
             await self._schedule_next_poll(session, shipment)
+        else:
+            # Reenviar um código também funciona como consulta manual:
+            # busca dados frescos antes de responder ao usuário.
+            provider_data = await self._query_best_provider(session, shipment)
+            if provider_data:
+                await self._apply_provider_data(session, shipment, provider_data)
+                await self._schedule_next_poll(session, shipment)
 
         subscription = await session.scalar(
             select(Subscription)

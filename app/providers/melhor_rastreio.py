@@ -43,6 +43,7 @@ class MelhorRastreioProvider:
         id
         updatedAt
         lastStatus
+        estimatedDelivery
         trackers {
           type
           shippingService
@@ -54,6 +55,8 @@ class MelhorRastreioProvider:
           createdAt
           title
           description
+          from
+          to
           location {
             city
             state

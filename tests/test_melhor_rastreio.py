@@ -11,6 +11,7 @@ def test_parse_linked_tracker_result():
     result = {
         "id": "parcel-1",
         "lastStatus": "DELIVERED",
+        "estimatedDelivery": "2026-09-25T23:59:59-03:00",
         "trackers": [
             {
                 "type": "melhorenvio",
@@ -28,6 +29,8 @@ def test_parse_linked_tracker_result():
                 "createdAt": "2026-09-20T10:00:00-03:00",
                 "title": "Objeto em trânsito",
                 "description": "Objeto encaminhado",
+                "from": "01 - CAMPO GRANDE/MS",
+                "to": "01 - IVINHEMA/MS",
                 "location": {
                     "city": "Campo Grande",
                     "state": "MS",
@@ -38,6 +41,8 @@ def test_parse_linked_tracker_result():
                 "createdAt": "2026-09-21T12:00:00-03:00",
                 "title": "Objeto entregue",
                 "description": "Entrega realizada",
+                "from": "01 - IVINHEMA/MS",
+                "to": "DESTINATARIO",
                 "location": {
                     "city": "Ivinhema",
                     "state": "MS",
