@@ -1,20 +1,20 @@
 WELCOME = """Olá, <b>{name}</b>! 👋
-Acompanhe suas encomendas de forma simples e receba as novas movimentações direto por aqui.
+Acompanhe suas encomendas e receba novas movimentações direto por aqui.
 
-<b>🔎 Como rastrear</b>
+<b>🔎 Rastrear uma encomenda</b>
 
-Envie o código da encomenda:
+Envie o código de rastreio:
 <code>AB123456789BR</code>
 
-Se quiser adicionar um nome, envie o código e o nome juntos:
+Se quiser, adicione um nome:
 <code>AB123456789BR Teclado gamer</code>
 
-<b>✨ Jeitos mais rápidos</b>
-• Encaminhe a mensagem da loja que contém o rastreio.
-• Envie um print onde aparece o código.
-• Use <b>📦 Visão geral</b> para acompanhar tudo em um só lugar.
+<b>✨ Também funciona</b>
+• Encaminhe a mensagem da loja ou transportadora.
+• Envie uma foto da etiqueta ou uma captura de tela.
+• Use <b>📦 Visão geral</b> para acompanhar o que merece atenção.
 
-<blockquote expandable><b>🚚 Principais transportadoras compatíveis</b>
+<blockquote expandable><b>🚚 Transportadoras compatíveis</b>
 
 • Correios
 • J&T Express
@@ -30,7 +30,7 @@ Se quiser adicionar um nome, envie o código e o nome juntos:
 <i>A transportadora é identificada automaticamente sempre que possível.</i></blockquote>
 
 <b>Pronto para começar?</b>
-Envie seu código de rastreio abaixo. 🚚✨"""
+Envie seu código de rastreio abaixo. 📦"""
 
 HELP = """🆘 <b>Como usar o Melhor Rastreio</b>
 
@@ -38,16 +38,21 @@ HELP = """🆘 <b>Como usar o Melhor Rastreio</b>
 Envie o código diretamente no chat:
 <code>AB123456789BR</code>
 
-Se quiser, adicione um nome depois do código:
+Você também pode adicionar um nome:
 <code>AB123456789BR Teclado gamer</code>
 
-<blockquote>O bot identifica a transportadora, consulta o pacote e salva o rastreio automaticamente.</blockquote>
+<blockquote>O bot identifica a transportadora, consulta a encomenda e começa a acompanhá-la automaticamente.</blockquote>
 
-<b>📨 Mensagem ou print</b>
-Você também pode encaminhar a mensagem da loja ou enviar um print. O bot tenta localizar o código e pede sua confirmação antes de salvar.
+<b>📸 Mensagem ou imagem</b>
+Encaminhe a mensagem da loja ou envie uma foto da etiqueta. O scanner tenta ler QR Code e código de barras primeiro; se necessário, usa OCR. O código sempre aparece para sua confirmação antes de ser salvo.
 
 <b>📦 Visão geral</b>
-Mostra somente o que importa no momento: encomendas em trânsito, na região de destino, com atenção necessária, saídas para entrega e entregas concluídas no dia.
+Mostra apenas o que existe no momento: encomendas em trânsito, na região de destino, com alguma ocorrência, saídas para entrega e entregas concluídas no dia.
+
+<b>🗃 Entregas antigas</b>
+Entregas recentes ficam em <b>Entregues</b>. Depois, passam automaticamente para o <b>Arquivo</b>.
+
+🔔 Em cada encomenda, use <b>Alertas</b> para escolher quais movimentações deseja receber.
 
 <blockquote expandable><b>🚚 Transportadoras</b>
 
@@ -60,9 +65,7 @@ Mostra somente o que importa no momento: encomendas em trânsito, na região de 
 • Buslog
 • Viação Mundo
 • Melhor Envio
-• Total Express</blockquote>
-
-🔔 Quando os alertas estiverem ativos, você recebe novas movimentações automaticamente."""
+• Total Express</blockquote>"""
 
 SECURITY = """🛡 <b>Rastreio seguro</b>
 
@@ -71,18 +74,18 @@ SECURITY = """🛡 <b>Rastreio seguro</b>
 • Cobranças fiscais legítimas podem existir em alguns envios; confirme sempre diretamente no canal oficial antes de pagar.
 • Nunca envie senha, código de autenticação ou dados bancários pelo chat do bot.
 
-Se uma movimentação mencionar taxa, retenção ou pagamento, trate o aviso apenas como informação e valide a cobrança fora do bot."""
+Se uma movimentação mencionar taxa, retenção ou pagamento, use o aviso apenas como referência e confirme a cobrança no canal oficial responsável."""
 
-NO_SHIPMENTS = """📭 <b>Nenhuma encomenda ativa.</b>
+NO_SHIPMENTS = """📭 <b>Nenhuma encomenda em acompanhamento.</b>
 
 Envie um código de rastreio para começar."""
 
 INVALID_CODE = """❌ <b>Não encontrei um código de rastreio válido.</b>
 
-Envie o código sozinho:
+Envie somente o código:
 <code>AB123456789BR</code>
 
-Ou junto com um nome:
+Ou código + nome:
 <code>AB123456789BR Teclado gamer</code>
 
-Você também pode encaminhar a mensagem da loja ou enviar um print com o código."""
+Você também pode encaminhar a mensagem da loja ou enviar uma foto da etiqueta."""
