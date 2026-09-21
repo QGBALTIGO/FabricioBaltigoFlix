@@ -122,12 +122,16 @@ def suggested_nickname(
     return None
 
 
-def _normalize_candidate(raw: str) -> str | None:
+def _normalize_candidate(
+    raw: str,
+    *,
+    allow_numeric: bool = False,
+) -> str | None:
     raw = re.sub(r"\s+", "", str(raw or ""))
     number = normalize_tracking_number(raw.strip(" .,:;()[]{}"))
     if not is_valid_tracking_number(number):
         return None
-    if number.isdigit():
+    if number.isdigit() and not allow_numeric:
         return None
     if not any(ch.isdigit() for ch in number):
         return None
@@ -166,7 +170,10 @@ def extract_tracking_candidates(
         raw = match.group(1)
         # Stop before common sentence separators when OCR/text captured too much.
         raw = re.split(r"[\n,;|]", raw, maxsplit=1)[0]
-        number = _normalize_candidate(raw)
+        number = _normalize_candidate(
+            raw,
+            allow_numeric=True,
+        )
         if number:
             scores[number] = max(scores.get(number, 0.0), 0.96)
 
