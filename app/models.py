@@ -203,3 +203,130 @@ class PollingState(Base):
         DateTime(timezone=True), nullable=True, index=True
     )
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    quiet_hours_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+    )
+    quiet_start_minute: Mapped[int] = mapped_column(
+        Integer,
+        default=23 * 60,
+    )
+    quiet_end_minute: Mapped[int] = mapped_column(
+        Integer,
+        default=7 * 60,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+
+class SubscriptionPreference(Base):
+    __tablename__ = "subscription_preferences"
+
+    subscription_id: Mapped[int] = mapped_column(
+        ForeignKey("subscriptions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    custom_alerts_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+    )
+    alert_out_for_delivery: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+    )
+    alert_delivered: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+    )
+    alert_problems: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+    )
+    alert_intermediate: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+    )
+    store_name: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
+    )
+    order_number: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
+    )
+    product_name: Mapped[str | None] = mapped_column(
+        String(180),
+        nullable=True,
+    )
+    category: Mapped[str | None] = mapped_column(
+        String(80),
+        nullable=True,
+    )
+    source: Mapped[str] = mapped_column(
+        String(40),
+        default="manual",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+
+class DeferredNotification(Base):
+    __tablename__ = "deferred_notifications"
+    __table_args__ = (
+        UniqueConstraint(
+            "subscription_id",
+            "event_id",
+            name="uq_deferred_notification_event",
+        ),
+        Index(
+            "ix_deferred_notification_deliver_after",
+            "deliver_after",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+    subscription_id: Mapped[int] = mapped_column(
+        ForeignKey("subscriptions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("tracking_events.id", ondelete="CASCADE"),
+        index=True,
+    )
+    event_count: Mapped[int] = mapped_column(
+        Integer,
+        default=1,
+    )
+    deliver_after: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )

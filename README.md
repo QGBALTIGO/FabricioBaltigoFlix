@@ -77,6 +77,43 @@ Comandos principais:
 
 Também é possível simplesmente enviar o código no chat.
 
+### Caixa de entrada inteligente
+
+Além do código puro, o bot pode:
+
+- detectar códigos dentro de mensagens de lojas/transportadoras;
+- receber mensagens encaminhadas e sugerir o rastreio encontrado;
+- ler prints localmente por OCR, sem enviar a imagem para um serviço de IA/OCR externo;
+- detectar, quando presentes, loja, número do pedido e nome do produto;
+- pedir confirmação antes de cadastrar qualquer código detectado automaticamente.
+
+### Central Hoje
+
+O botão **🏠 Hoje** resume as encomendas por prioridade:
+
+- saiu para entrega;
+- chegando perto;
+- precisam de atenção;
+- em trânsito;
+- entregues no dia.
+
+Quando há histórico suficiente da mesma transportadora, o painel também calcula uma janela estimada usando entregas anteriores em vez de inventar uma data sem amostra.
+
+### Alertas avançados
+
+O toggle rápido de alertas continua existindo. Opcionalmente, cada pacote pode ativar filtros separados para:
+
+- movimentações intermediárias;
+- saída para entrega;
+- problemas, fiscalização e retirada;
+- entrega concluída.
+
+O usuário também pode configurar horário silencioso. Eventos ocorridos nesse período são persistidos no PostgreSQL e entregues depois, sem serem descartados.
+
+### Assistente de ocorrência
+
+Cada cartão mostra uma orientação curta em **💡 Agora** e o botão **🧭 O que fazer?** explica o próximo passo de acordo com o status atual.
+
 ## Banco
 
 Tabelas principais:
@@ -88,9 +125,15 @@ Tabelas principais:
 - notification_logs
 - provider_health
 - polling_states
+- user_preferences
+- subscription_preferences
+- deferred_notifications
 
 `provider_health` guarda a saúde das fontes.
 `polling_states` controla quando cada encomenda deve ser consultada novamente.
+`user_preferences` guarda preferências globais como horário silencioso.
+`subscription_preferences` guarda alertas e metadados opcionais por encomenda.
+`deferred_notifications` garante que alertas silenciosos sejam entregues depois.
 
 ## Melhor Rastreio GraphQL
 
@@ -126,7 +169,9 @@ O Telegram roda via webhook e o PostgreSQL persiste usuários, pacotes, eventos 
 - webhook Telegram usa secret token;
 - API própria usa bearer token;
 - links compartilháveis são assinados;
-- logs do httpx/httpcore são silenciados para não expor token do Telegram.
+- logs do httpx/httpcore são silenciados para não expor token do Telegram;
+- OCR de prints roda localmente e o arquivo temporário é removido após a leitura;
+- códigos detectados em texto ou imagem só são cadastrados depois da confirmação do usuário.
 
 ## Testes
 
