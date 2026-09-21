@@ -321,7 +321,6 @@ class DeferredNotification(Base):
     )
     deliver_after: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
