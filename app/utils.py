@@ -101,3 +101,21 @@ def is_stale(value: datetime | None, threshold_hours: int) -> bool:
 
 def mentions_payment(text: str | None) -> bool:
     return bool(SUSPICIOUS_PAYMENT_RE.search(text or ""))
+
+
+
+def parse_tracking_input(value: str) -> tuple[str | None, str | None]:
+    text = (value or "").strip()
+    if not text:
+        return None, None
+
+    parts = text.split(maxsplit=1)
+    number = normalize_tracking_number(parts[0])
+    if not is_valid_tracking_number(number):
+        return None, None
+
+    nickname = None
+    if len(parts) > 1:
+        nickname = parts[1].strip()[:120] or None
+
+    return number, nickname
