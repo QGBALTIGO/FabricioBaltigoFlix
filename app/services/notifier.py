@@ -22,7 +22,6 @@ from app.models import (
     SubscriptionPreference,
     TrackingEvent,
     User,
-    UserPreference,
 )
 from app.presentation import (
     format_tracking_notification_fallback,
@@ -30,7 +29,6 @@ from app.presentation import (
 )
 from app.services.preferences import (
     custom_alert_allows,
-    quiet_window,
 )
 from app.status import should_notify
 
@@ -151,11 +149,6 @@ async def notify_new_events(
         int(sub.id)
         for sub in subs
     ]
-    user_ids = [
-        int(sub.user_id)
-        for sub in subs
-    ]
-
     sub_prefs = {
         int(pref.subscription_id): pref
         for pref in (
@@ -165,18 +158,6 @@ async def notify_new_events(
                 ).where(
                     SubscriptionPreference.subscription_id
                     .in_(sub_ids)
-                )
-            )
-        ).all()
-    }
-    user_prefs = {
-        int(pref.user_id): pref
-        for pref in (
-            await session.scalars(
-                select(UserPreference).where(
-                    UserPreference.user_id.in_(
-                        user_ids
-                    )
                 )
             )
         ).all()
@@ -199,73 +180,7 @@ async def notify_new_events(
         await session.commit()
         return 0
 
-    existing_deferred: set[int] = set()
-    latest_event_id = getattr(
-        latest_event,
-        "id",
-        None,
-    )
-    if latest_event_id:
-        existing_deferred = {
-            int(subscription_id)
-            for subscription_id in (
-                await session.scalars(
-                    select(
-                        DeferredNotification.subscription_id
-                    ).where(
-                        DeferredNotification.subscription_id
-                        .in_(
-                            [
-                                int(sub.id)
-                                for sub in eligible
-                            ]
-                        ),
-                        DeferredNotification.event_id
-                        == int(latest_event_id),
-                    )
-                )
-            ).all()
-        }
-
-    immediate: list[Subscription] = []
-
-    for sub in eligible:
-        quiet, deliver_after = quiet_window(
-            user_prefs.get(
-                int(sub.user_id)
-            ),
-            settings.display_timezone,
-        )
-
-        if (
-            quiet
-            and deliver_after is not None
-            and latest_event_id
-        ):
-            if int(sub.id) not in existing_deferred:
-                session.add(
-                    DeferredNotification(
-                        subscription_id=int(
-                            sub.id
-                        ),
-                        event_id=int(
-                            latest_event_id
-                        ),
-                        event_count=max(
-                            1,
-                            new_events_count,
-                        ),
-                        deliver_after=deliver_after,
-                    )
-                )
-                existing_deferred.add(
-                    int(sub.id)
-                )
-            continue
-
-        immediate.append(sub)
-
-    # Persiste a fila silenciosa e libera a conexão antes do fanout Telegram.
+    # Libera a conexão antes do fanout para o Telegram.
     await session.commit()
 
     async def send_one(
@@ -308,10 +223,10 @@ async def notify_new_events(
 
     for offset in range(
         0,
-        len(immediate),
+        len(eligible),
         batch_size,
     ):
-        batch = immediate[
+        batch = eligible[
             offset:offset + batch_size
         ]
 
@@ -329,7 +244,7 @@ async def notify_new_events(
 
         if (
             offset + batch_size
-            < len(immediate)
+            < len(eligible)
             and settings
             .notification_batch_pause_seconds
             > 0
@@ -407,11 +322,6 @@ async def send_due_deferred_notifications(
         int(sub.id)
         for _, sub, _, _, _ in rows
     ]
-    user_ids = [
-        int(user.id)
-        for _, _, user, _, _ in rows
-    ]
-
     sub_prefs = {
         int(pref.subscription_id): pref
         for pref in (
@@ -425,19 +335,6 @@ async def send_due_deferred_notifications(
             )
         ).all()
     }
-    user_prefs = {
-        int(pref.user_id): pref
-        for pref in (
-            await session.scalars(
-                select(UserPreference).where(
-                    UserPreference.user_id.in_(
-                        user_ids
-                    )
-                )
-            )
-        ).all()
-    }
-
     await session.commit()
 
     sent = 0
@@ -465,21 +362,6 @@ async def send_due_deferred_notifications(
         ):
             await session.delete(
                 deferred
-            )
-            continue
-
-        quiet, next_after = quiet_window(
-            user_prefs.get(
-                int(user.id)
-            ),
-            settings.display_timezone,
-        )
-        if (
-            quiet
-            and next_after is not None
-        ):
-            deferred.deliver_after = (
-                next_after
             )
             continue
 
