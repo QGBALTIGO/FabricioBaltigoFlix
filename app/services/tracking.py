@@ -540,6 +540,58 @@ class TrackingService:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
 
+
+    @classmethod
+    def _notification_events_after(
+        cls,
+        events: list[TrackingEvent],
+        previous_last_event_at: datetime | None,
+    ) -> list[TrackingEvent]:
+        if not events:
+            return []
+
+        cutoff = cls._as_utc(
+            previous_last_event_at
+        )
+
+        if cutoff is None:
+            return sorted(
+                events,
+                key=lambda item: (
+                    cls._as_utc(
+                        item.event_at
+                    )
+                    or datetime.min.replace(
+                        tzinfo=timezone.utc
+                    )
+                ),
+            )
+
+        fresh = [
+            event
+            for event in events
+            if (
+                cls._as_utc(
+                    event.event_at
+                )
+                and cls._as_utc(
+                    event.event_at
+                ) > cutoff
+            )
+        ]
+
+        return sorted(
+            fresh,
+            key=lambda item: (
+                cls._as_utc(
+                    item.event_at
+                )
+                or datetime.min.replace(
+                    tzinfo=timezone.utc
+                )
+            ),
+        )
+
     async def _provider_quarantined(
         self,
         session: AsyncSession,
@@ -598,23 +650,43 @@ class TrackingService:
         session: AsyncSession,
         shipment: Shipment,
     ) -> tuple[ProviderTracking | None, list[TrackingEvent]]:
-        provider_data = await self._query_best_provider(session, shipment)
-        new_events: list[TrackingEvent] = []
+        previous_last_event_at = shipment.last_event_at
+
+        provider_data = await self._query_best_provider(
+            session,
+            shipment,
+        )
+        stored_events: list[TrackingEvent] = []
+        notification_events: list[TrackingEvent] = []
 
         if provider_data:
-            new_events = await self._apply_provider_data(
-                session, shipment, provider_data
+            stored_events = await self._apply_provider_data(
+                session,
+                shipment,
+                provider_data,
             )
-            await self._schedule_next_poll(session, shipment)
+            notification_events = (
+                self._notification_events_after(
+                    stored_events,
+                    previous_last_event_at,
+                )
+            )
+            await self._schedule_next_poll(
+                session,
+                shipment,
+            )
         else:
             await self._schedule_next_poll(
                 session,
                 shipment,
-                error="Nenhuma fonte encontrou o código nesta rodada.",
+                error=(
+                    "Nenhuma fonte encontrou o código "
+                    "nesta rodada."
+                ),
             )
 
         await session.commit()
-        return provider_data, new_events
+        return provider_data, notification_events
 
     async def apply_webhook(
         self,
@@ -624,16 +696,36 @@ class TrackingService:
         shipment = await session.scalar(
             select(Shipment).where(
                 Shipment.tracking_number
-                == normalize_tracking_number(data.tracking_number)
+                == normalize_tracking_number(
+                    data.tracking_number
+                )
             )
         )
         if not shipment:
             return None, []
 
-        new_events = await self._apply_provider_data(session, shipment, data)
-        await self._schedule_next_poll(session, shipment)
+        previous_last_event_at = (
+            shipment.last_event_at
+        )
+
+        stored_events = await self._apply_provider_data(
+            session,
+            shipment,
+            data,
+        )
+        notification_events = (
+            self._notification_events_after(
+                stored_events,
+                previous_last_event_at,
+            )
+        )
+
+        await self._schedule_next_poll(
+            session,
+            shipment,
+        )
         await session.commit()
-        return shipment, new_events
+        return shipment, notification_events
 
     async def _apply_provider_data(
         self,
