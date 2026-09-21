@@ -20,9 +20,38 @@ def normalize_async_database_url(url: str) -> str:
     return url
 
 
+database_url = normalize_async_database_url(
+    settings.database_url
+)
+
+engine_kwargs = {
+    "pool_pre_ping": True,
+}
+
+if database_url.startswith(
+    "postgresql+asyncpg://"
+):
+    engine_kwargs.update(
+        {
+            "pool_size": max(
+                5,
+                settings.db_pool_size,
+            ),
+            "max_overflow": max(
+                0,
+                settings.db_max_overflow,
+            ),
+            "pool_timeout": max(
+                5.0,
+                settings.db_pool_timeout_seconds,
+            ),
+            "pool_recycle": 1800,
+        }
+    )
+
 engine = create_async_engine(
-    normalize_async_database_url(settings.database_url),
-    pool_pre_ping=True,
+    database_url,
+    **engine_kwargs,
 )
 
 SessionLocal = async_sessionmaker(
@@ -34,7 +63,9 @@ SessionLocal = async_sessionmaker(
 
 async def init_db() -> None:
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(
+            Base.metadata.create_all
+        )
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
