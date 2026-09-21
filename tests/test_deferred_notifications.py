@@ -137,6 +137,7 @@ async def test_quiet_event_is_persisted_and_delivered_later(
             current_event,
             *,
             telegram_id=None,
+            new_events_count=1,
         ):
             delivered.append(
                 (
