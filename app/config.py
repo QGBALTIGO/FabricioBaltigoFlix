@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
     webhook_base_url: str = ""
 
+    required_channel_enabled: bool = True
+    required_channel: str = "@GeekHunter_Br"
+    required_channel_url: str = "https://t.me/GeekHunter_Br"
+
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
 
     # Primary free tracking source.
