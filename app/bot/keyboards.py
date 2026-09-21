@@ -10,6 +10,7 @@ from telegram import (
 )
 
 from app.models import Subscription
+from app.services.archive import delivered_age_label
 from app.share import make_share_payload
 
 MAIN_MENU_OVERVIEW = "📦 Visão geral"
@@ -154,6 +155,7 @@ def list_keyboard(
     page: int,
     total_pages: int,
     list_kind: str,
+    timezone_name: str = "America/Sao_Paulo",
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
 
@@ -178,6 +180,16 @@ def list_keyboard(
         if list_kind == "remove":
             button_text = f"🗑 {label[:40]}"
             callback_data = f"delete:{sub.id}"
+        elif list_kind in {"delivered", "archive"}:
+            age = delivered_age_label(
+                shipment,
+                timezone_name,
+            )
+            prefix = "🗃" if list_kind == "archive" else "✅"
+            button_text = (
+                f"{prefix} {label[:28]} · {age}"
+            )
+            callback_data = f"open:{sub.id}"
         else:
             button_text = f"{emoji} {label[:40]}"
             callback_data = f"open:{sub.id}"
@@ -229,6 +241,24 @@ def list_keyboard(
                 InlineKeyboardButton(
                     "➕ Adicionar encomenda",
                     callback_data="packages:add",
+                )
+            ]
+        )
+    elif list_kind == "delivered":
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "🗃 Arquivo",
+                    callback_data="page:archive:0",
+                )
+            ]
+        )
+    elif list_kind == "archive":
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "✅ Entregues recentes",
+                    callback_data="page:delivered:0",
                 )
             ]
         )
