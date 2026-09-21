@@ -16,7 +16,10 @@ from fastapi import (
     Request,
 )
 from fastapi.responses import ORJSONResponse
-from sqlalchemy import select
+from sqlalchemy import (
+    select,
+    text as sql_text,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from telegram import Update
@@ -107,6 +110,16 @@ async def lifespan(app: FastAPI):
                     "obrigatório no modo webhook."
                 )
 
+            if (
+                settings.app_env.lower()
+                == "production"
+                and not settings.telegram_webhook_secret
+            ):
+                raise RuntimeError(
+                    "TELEGRAM_WEBHOOK_SECRET é obrigatório "
+                    "em produção no modo webhook."
+                )
+
             await telegram_app.bot.set_webhook(
                 url=(
                     settings
@@ -184,11 +197,29 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.2.0",
+    version="1.3.0",
     default_response_class=(
         ORJSONResponse
     ),
     lifespan=lifespan,
+    docs_url=(
+        None
+        if settings.app_env.lower()
+        == "production"
+        else "/docs"
+    ),
+    redoc_url=(
+        None
+        if settings.app_env.lower()
+        == "production"
+        else "/redoc"
+    ),
+    openapi_url=(
+        None
+        if settings.app_env.lower()
+        == "production"
+        else "/openapi.json"
+    ),
 )
 
 
@@ -196,9 +227,14 @@ app = FastAPI(
 async def root():
     return {
         "name": settings.app_name,
-        "version": "1.2.0",
+        "version": "1.3.0",
         "status": "online",
-        "docs": "/docs",
+        "docs": (
+            None
+            if settings.app_env.lower()
+            == "production"
+            else "/docs"
+        ),
         "telegram": bool(
             settings.telegram_bot_token
         ),
@@ -219,6 +255,26 @@ async def root():
 
 @app.get("/health")
 async def health():
+    return {"ok": True}
+
+
+@app.get("/ready")
+async def ready():
+    try:
+        async with SessionLocal() as session:
+            await session.execute(
+                sql_text("SELECT 1")
+            )
+    except Exception as exc:
+        log.error(
+            "Readiness do banco falhou: %s",
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            503,
+            "Banco indisponível",
+        ) from exc
+
     return {"ok": True}
 
 
@@ -280,18 +336,17 @@ async def telegram_webhook(
     return {"ok": True}
 
 
-def _validate_shared_secret(
+def _shared_secret_ok(
     secret: str | None,
-):
-    if (
+) -> bool:
+    return bool(
         settings.webhook_shared_secret
         and secret
-        != settings.webhook_shared_secret
-    ):
-        raise HTTPException(
-            403,
-            "Webhook inválido",
+        and hmac.compare_digest(
+            secret,
+            settings.webhook_shared_secret,
         )
+    )
 
 
 @app.post("/webhooks/17track")
@@ -306,55 +361,49 @@ async def webhook_17track(
 ):
     raw_body = await request.body()
 
-    shared_ok = bool(
-        settings.webhook_shared_secret
-        and secret
-        == settings.webhook_shared_secret
+    if (
+        not settings.seventeen_track_token
+        and not settings.webhook_shared_secret
+    ):
+        raise HTTPException(
+            404,
+            "Webhook 17TRACK desativado",
+        )
+
+    shared_ok = _shared_secret_ok(
+        secret
     )
+    signature_ok = False
 
     if (
-        settings.webhook_shared_secret
-        and not shared_ok
+        settings.seventeen_track_token
+        and settings
+        .seventeen_track_verify_signature
+        and sign
+    ):
+        expected = hashlib.sha256(
+            raw_body
+            .decode("utf-8")
+            .encode("utf-8")
+            + b"/"
+            + settings
+            .seventeen_track_token
+            .encode("utf-8")
+        ).hexdigest()
+
+        signature_ok = hmac.compare_digest(
+            sign.lower(),
+            expected.lower(),
+        )
+
+    if not (
+        shared_ok
+        or signature_ok
     ):
         raise HTTPException(
             403,
-            "Webhook inválido",
+            "Webhook 17TRACK não autenticado",
         )
-
-    if (
-        settings
-        .seventeen_track_verify_signature
-        and settings
-        .seventeen_track_token
-    ):
-        if sign:
-            expected = hashlib.sha256(
-                raw_body
-                .decode("utf-8")
-                .encode("utf-8")
-                + b"/"
-                + settings
-                .seventeen_track_token
-                .encode("utf-8")
-            ).hexdigest()
-
-            if not hmac.compare_digest(
-                sign.lower(),
-                expected.lower(),
-            ):
-                raise HTTPException(
-                    403,
-                    (
-                        "Assinatura "
-                        "17TRACK inválida"
-                    ),
-                )
-
-        elif not shared_ok:
-            raise HTTPException(
-                403,
-                "Assinatura 17TRACK ausente",
-            )
 
     payload = json.loads(
         raw_body
@@ -423,22 +472,39 @@ async def webhook_ship24(
         default=None
     ),
 ):
-    _validate_shared_secret(
-        secret
-    )
-
-    if settings.ship24_webhook_secret:
-        expected = (
-            "Bearer "
-            + settings
-            .ship24_webhook_secret
+    if (
+        not settings.ship24_webhook_secret
+        and not settings.webhook_shared_secret
+    ):
+        raise HTTPException(
+            404,
+            "Webhook Ship24 desativado",
         )
 
-        if authorization != expected:
-            raise HTTPException(
-                403,
-                "Webhook Ship24 inválido",
-            )
+    shared_ok = _shared_secret_ok(
+        secret
+    )
+    bearer_ok = bool(
+        settings.ship24_webhook_secret
+        and authorization
+        and hmac.compare_digest(
+            authorization,
+            (
+                "Bearer "
+                + settings
+                .ship24_webhook_secret
+            ),
+        )
+    )
+
+    if not (
+        shared_ok
+        or bearer_ok
+    ):
+        raise HTTPException(
+            403,
+            "Webhook Ship24 não autenticado",
+        )
 
     payload = await request.json()
 
