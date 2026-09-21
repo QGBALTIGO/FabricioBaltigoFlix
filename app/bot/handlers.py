@@ -771,6 +771,23 @@ async def delivered(
     )
 
 
+async def archive(
+    update: Update,
+    context: CallbackContext,
+) -> None:
+    context.user_data[
+        "list_state"
+    ] = {
+        "mode": "archive"
+    }
+
+    await _show_list(
+        update,
+        context,
+        page=0,
+    )
+
+
 async def _show_list(
     update: Update,
     context: CallbackContext,
@@ -791,6 +808,7 @@ async def _show_list(
         "active",
     )
     delivered_flag: bool | None = False
+    archived_filter: bool | None = None
     status_filter = state.get(
         "status"
     )
@@ -803,6 +821,10 @@ async def _show_list(
 
     if mode == "delivered":
         delivered_flag = True
+        archived_filter = False
+    elif mode == "archive":
+        delivered_flag = True
+        archived_filter = True
     elif mode in {
         "search",
         "filter",
@@ -830,6 +852,9 @@ async def _show_list(
             delivered=(
                 delivered_flag
             ),
+            archived=(
+                archived_filter
+            ),
             status=status_filter,
             carrier=carrier_filter,
             query=query_text,
@@ -850,8 +875,16 @@ async def _show_list(
             )
         elif mode == "delivered":
             text = (
-                "✅ Você ainda não tem "
-                "encomendas entregues salvas."
+                "✅ <b>Entregues recentes</b>\n\n"
+                "Nenhuma entrega recente por aqui. "
+                "As entregas mais antigas ficam no arquivo."
+            )
+        elif mode == "archive":
+            text = (
+                "🗃 <b>Arquivo</b>\n\n"
+                "Seu arquivo ainda está vazio. "
+                "Entregas concluídas há mais de "
+                f"{settings.delivered_archive_after_days} dias aparecem aqui automaticamente."
             )
         elif mode == "remove":
             text = (
@@ -920,7 +953,8 @@ async def _show_list(
 
     title = {
         "active": "📦 <b>Meus pacotes</b>",
-        "delivered": "✅ <b>Entregues</b>",
+        "delivered": "✅ <b>Entregues recentes</b>",
+        "archive": "🗃 <b>Arquivo</b>",
         "search": (
             "🔎 <b>Busca:</b> "
             + html.escape(
@@ -972,17 +1006,41 @@ async def _show_list(
                 if total == 1
                 else f"<b>{total} encomendas</b>"
             )
-            text = (
-                f"{title}{suffix}\n\n"
-                f"Você tem {count_text} nesta lista.\n\n"
-                "Toque em um pacote para abrir os detalhes."
-            )
+            if mode == "delivered":
+                text = (
+                    f"{title}{suffix}\n\n"
+                    f"{count_text.capitalize()} entregue recentemente.\n"
+                    f"Após {settings.delivered_archive_after_days} dias, ela passa automaticamente para o arquivo."
+                    if total == 1
+                    else (
+                        f"{title}{suffix}\n\n"
+                        f"{count_text.capitalize()} entregues recentemente.\n"
+                        f"Após {settings.delivered_archive_after_days} dias, elas passam automaticamente para o arquivo."
+                    )
+                )
+            elif mode == "archive":
+                text = (
+                    f"{title}{suffix}\n\n"
+                    f"{count_text.capitalize()} guardada no histórico de entregas."
+                    if total == 1
+                    else (
+                        f"{title}{suffix}\n\n"
+                        f"{count_text.capitalize()} guardadas no histórico de entregas."
+                    )
+                )
+            else:
+                text = (
+                    f"{title}{suffix}\n\n"
+                    f"Você tem {count_text} nesta lista.\n\n"
+                    "Toque em um pacote para abrir os detalhes."
+                )
 
     markup = list_keyboard(
         subs,
         page,
         total_pages,
         mode,
+        timezone_name=settings.display_timezone,
     )
 
     if (
