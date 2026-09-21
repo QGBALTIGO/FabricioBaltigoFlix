@@ -1469,7 +1469,14 @@ class TrackingService:
                     PollingState.next_check_at <= now,
                 ),
             )
-            .order_by(Shipment.last_event_at.asc().nullsfirst())
+            .order_by(
+                PollingState.next_check_at
+                .asc()
+                .nullsfirst(),
+                Shipment.last_event_at
+                .asc()
+                .nullsfirst(),
+            )
             .limit(
                 max(
                     50,
