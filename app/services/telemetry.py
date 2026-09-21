@@ -62,6 +62,7 @@ class AdminHealthSnapshot:
     poll_backlog: int
     provider_queries_hour: int
     provider_metrics: list[ProviderMetric]
+    carrier_metrics: list[ProviderMetric]
     fastest_provider: ProviderMetric | None
     quarantined: list[QuarantinedProvider]
     notification_sent_24h: int
@@ -88,6 +89,7 @@ async def record_operational_event(
     ok: bool,
     duration_ms: int | float | None = None,
     detail: str | None = None,
+    context_name: str | None = None,
 ) -> None:
     duration = None
     if duration_ms is not None:
@@ -104,6 +106,11 @@ async def record_operational_event(
             kind=str(kind)[:40],
             name=str(name)[:80],
             ok=bool(ok),
+            context_name=(
+                str(context_name)[:120]
+                if context_name
+                else None
+            ),
             duration_ms=duration,
             detail=(
                 str(detail)[:120]
@@ -121,6 +128,7 @@ async def record_runtime_event(
     ok: bool,
     duration_ms: int | float | None = None,
     detail: str | None = None,
+    context_name: str | None = None,
 ) -> None:
     """Persist one privacy-safe metric using its own short DB session."""
 
@@ -135,6 +143,7 @@ async def record_runtime_event(
                 ok=ok,
                 duration_ms=duration_ms,
                 detail=detail,
+                context_name=context_name,
             )
             await session.commit()
     except Exception:
@@ -238,6 +247,98 @@ async def _provider_metrics(
                 failures
                 or 0
             ),
+            avg_ms=(
+                int(round(avg_ms))
+                if avg_ms is not None
+                else None
+            ),
+        )
+        for (
+            name,
+            queries,
+            successes,
+            failures,
+            avg_ms,
+        ) in rows
+    ]
+
+
+async def _carrier_metrics(
+    session: AsyncSession,
+    *,
+    since: datetime,
+) -> list[ProviderMetric]:
+    success_count = func.sum(
+        case(
+            (
+                OperationalEvent.ok.is_(
+                    True
+                ),
+                1,
+            ),
+            else_=0,
+        )
+    )
+    failure_count = func.sum(
+        case(
+            (
+                OperationalEvent.ok.is_(
+                    False
+                ),
+                1,
+            ),
+            else_=0,
+        )
+    )
+    success_latency = func.avg(
+        case(
+            (
+                OperationalEvent.ok.is_(
+                    True
+                ),
+                OperationalEvent.duration_ms,
+            ),
+            else_=None,
+        )
+    )
+
+    rows = (
+        await session.execute(
+            select(
+                OperationalEvent.context_name,
+                func.count(
+                    OperationalEvent.id
+                ),
+                success_count,
+                failure_count,
+                success_latency,
+            )
+            .where(
+                OperationalEvent.kind
+                == "provider_query",
+                OperationalEvent.created_at
+                >= since,
+                OperationalEvent.context_name
+                .is_not(None),
+            )
+            .group_by(
+                OperationalEvent.context_name
+            )
+            .order_by(
+                func.count(
+                    OperationalEvent.id
+                ).desc()
+            )
+            .limit(8)
+        )
+    ).all()
+
+    return [
+        ProviderMetric(
+            name=str(name),
+            queries=int(queries or 0),
+            successes=int(successes or 0),
+            failures=int(failures or 0),
             avg_ms=(
                 int(round(avg_ms))
                 if avg_ms is not None
@@ -365,6 +466,12 @@ async def build_admin_health_snapshot(
     provider_queries_hour = sum(
         item.queries
         for item in provider_metrics
+    )
+    carrier_metrics = (
+        await _carrier_metrics(
+            session,
+            since=hour_cutoff,
+        )
     )
 
     eligible_fastest = [
@@ -578,6 +685,7 @@ async def build_admin_health_snapshot(
         poll_backlog=poll_backlog,
         provider_queries_hour=provider_queries_hour,
         provider_metrics=provider_metrics,
+        carrier_metrics=carrier_metrics,
         fastest_provider=fastest_provider,
         quarantined=quarantined,
         notification_sent_24h=notification_sent_24h,
