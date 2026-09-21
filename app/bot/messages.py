@@ -1,21 +1,13 @@
-WELCOME = """📦 <b>Melhor Rastreio</b>
-
-Olá, <b>{name}</b>! 👋
+WELCOME = """Olá, <b>{name}</b>! 👋
 Acompanhe suas encomendas de forma simples e receba as novas movimentações direto por aqui.
 
 <b>🔎 Como rastrear</b>
 
-Envie apenas o código:
-<code>AP499229999BR</code>
+Envie o código da encomenda:
+<code>AB123456789BR</code>
 
-Ou dê um nome ao pacote:
-<code>AP499229999BR Placa 10k</code>
-
-<blockquote>💡 É só enviar a mensagem. Não precisa usar /comando.</blockquote>
-
-<b>📂 Seu painel</b>
-📦 <b>Meus pacotes</b> — consulte seus rastreios salvos
-🗑 <b>Remover pacote</b> — exclua um código da sua lista
+Se quiser adicionar um nome, envie o código e o nome juntos:
+<code>AB123456789BR Teclado gamer</code>
 
 <blockquote expandable><b>🚚 Principais transportadoras compatíveis</b>
 
@@ -39,16 +31,12 @@ HELP = """🆘 <b>Como usar o Melhor Rastreio</b>
 
 <b>🔎 Novo rastreio</b>
 Envie o código diretamente no chat:
-<code>AP499229999BR</code>
+<code>AB123456789BR</code>
 
 Se quiser, adicione um nome depois do código:
-<code>AP499229999BR Minha encomenda</code>
+<code>AB123456789BR Teclado gamer</code>
 
 <blockquote>O bot identifica a transportadora, consulta o pacote e salva o rastreio automaticamente.</blockquote>
-
-<b>📂 Menu</b>
-📦 <b>Meus pacotes</b> — consultar rastreios salvos
-🗑 <b>Remover pacote</b> — excluir um código
 
 <blockquote expandable><b>🚚 Transportadoras</b>
 
@@ -81,7 +69,7 @@ Envie um código de rastreio para começar."""
 INVALID_CODE = """❌ <b>Não encontrei um código de rastreio válido.</b>
 
 Envie o código sozinho:
-<code>AP499229999BR</code>
+<code>AB123456789BR</code>
 
 Ou junto com um nome:
-<code>AP499229999BR Minha encomenda</code>"""
+<code>AB123456789BR Teclado gamer</code>"""
