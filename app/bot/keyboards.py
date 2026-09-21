@@ -141,6 +141,19 @@ def history_keyboard(
     return InlineKeyboardMarkup(rows)
 
 
+def add_package_help_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "⬅️ Voltar para Meus pacotes",
+                    callback_data="packages:back",
+                )
+            ]
+        ]
+    )
+
+
 def notify_keyboard(
     sub: Subscription,
 ) -> InlineKeyboardMarkup:
@@ -245,6 +258,16 @@ def list_keyboard(
 
     if nav:
         rows.append(nav)
+
+    if list_kind == "active":
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "➕ Adicionar encomenda",
+                    callback_data="packages:add",
+                )
+            ]
+        )
 
     return InlineKeyboardMarkup(rows)
 
