@@ -171,6 +171,49 @@ class NotificationLog(Base):
     )
 
 
+class OperationalEvent(Base):
+    __tablename__ = "operational_events"
+    __table_args__ = (
+        Index(
+            "ix_operational_kind_created",
+            "kind",
+            "created_at",
+        ),
+        Index(
+            "ix_operational_name_created",
+            "name",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+    kind: Mapped[str] = mapped_column(
+        String(40),
+    )
+    name: Mapped[str] = mapped_column(
+        String(80),
+    )
+    ok: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+    )
+    duration_ms: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    detail: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+
+
 class ProviderHealth(Base):
     __tablename__ = "provider_health"
 
