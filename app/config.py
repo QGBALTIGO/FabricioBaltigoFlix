@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     provider_concurrency_per_source: int = 12
     manual_refresh_min_seconds: int = 60
 
+    image_barcode_scan_enabled: bool = True
+    image_barcode_timeout_seconds: float = 8.0
     image_ocr_enabled: bool = True
     image_ocr_max_bytes: int = 8 * 1024 * 1024
     image_ocr_cooldown_seconds: float = 15.0
