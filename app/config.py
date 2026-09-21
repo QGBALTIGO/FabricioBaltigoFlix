@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     image_ocr_concurrency: int = 1
 
     list_page_size: int = 10
+    delivered_archive_after_days: int = 7
     stale_after_hours: int = 72
     stale_monitor_enabled: bool = True
     stale_check_interval_minutes: int = 60
