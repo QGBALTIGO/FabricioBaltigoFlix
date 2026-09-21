@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     webhook_base_url: str = ""
     telegram_concurrent_updates: int = 64
     telegram_update_queue_size: int = 10000
+    telegram_webhook_max_connections: int = 100
 
     required_channel_enabled: bool = True
     required_channel: str = "@GeekHunter_Br"
