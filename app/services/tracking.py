@@ -27,6 +27,7 @@ from app.providers.base import (
 from app.providers.correios_direct import CorreiosDirectProvider
 from app.providers.jadlog_direct import JadlogDirectProvider
 from app.providers.melhor_rastreio import MelhorRastreioProvider
+from app.providers.rastreador_pacotes import RastreadorPacotesProvider
 from app.providers.seventeen_track import SeventeenTrackProvider
 from app.providers.ship24 import Ship24Provider
 from app.providers.total_express_direct import TotalExpressDirectProvider
@@ -48,6 +49,16 @@ class TrackingService:
         self.melhor = (
             MelhorRastreioProvider(settings.http_timeout_seconds)
             if settings.melhor_rastreio_enabled
+            else None
+        )
+        self.rastreador_pacotes = (
+            RastreadorPacotesProvider(
+                min(
+                    settings.http_timeout_seconds,
+                    15.0,
+                )
+            )
+            if settings.direct_fallbacks_enabled
             else None
         )
         self.correios = (
@@ -87,6 +98,7 @@ class TrackingService:
             provider.name: provider
             for provider in (
                 self.melhor,
+                self.rastreador_pacotes,
                 self.correios,
                 self.jadlog,
                 self.total_express,
@@ -245,6 +257,16 @@ class TrackingService:
     def _candidate_providers(self, shipment: Shipment) -> list[Any]:
         candidates: list[Any] = []
 
+        if (
+            self.rastreador_pacotes
+            and self.rastreador_pacotes.can_handle(
+                shipment.tracking_number
+            )
+        ):
+            candidates.append(
+                self.rastreador_pacotes
+            )
+
         if self.melhor:
             candidates.append(self.melhor)
 
@@ -305,10 +327,12 @@ class TrackingService:
         # On an exact timestamp tie, prefer the result with
         # more history. For Correios, prefer the direct source
         # because it usually reflects the official feed sooner.
-        direct_bonus = (
-            1
-            if data.provider == "correios_direct"
-            else 0
+        direct_bonus = {
+            "rastreador_pacotes": 2,
+            "correios_direct": 1,
+        }.get(
+            data.provider,
+            0,
         )
         return (
             latest,
@@ -434,10 +458,35 @@ class TrackingService:
         if not available:
             return None
 
-        return max(
+        best = max(
             available,
             key=self._provider_freshness_key,
         )
+
+        # Preserve ETA from another healthy source when the
+        # freshest Correios feed does not provide one.
+        if isinstance(best.raw, dict):
+            if not best.raw.get("estimatedDelivery"):
+                for candidate in available:
+                    raw = (
+                        candidate.raw
+                        if isinstance(
+                            candidate.raw,
+                            dict,
+                        )
+                        else {}
+                    )
+                    eta = raw.get(
+                        "estimatedDelivery"
+                    )
+                    if eta:
+                        best.raw = {
+                            **best.raw,
+                            "estimatedDelivery": eta,
+                        }
+                        break
+
+        return best
 
     async def _query_provider(
         self,
