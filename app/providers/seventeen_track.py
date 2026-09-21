@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from app.http_client import get_provider_http_client
+
 from app.providers.base import ProviderEvent, ProviderTracking
 from app.status import normalize_status
 from app.utils import parse_datetime
@@ -28,14 +30,15 @@ class SeventeenTrackProvider:
         return {"17token": self.token, "Content-Type": "application/json"}
 
     async def _post(self, path: str, payload: Any) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/{path}",
-                headers=self.headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
+        client = await get_provider_http_client()
+        response = await client.post(
+            f"{self.base_url}/{path}",
+            headers=self.headers,
+            json=payload,
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
         if data.get("code") not in (0, "0", None):
             raise SeventeenTrackError(
                 data.get("message") or "Erro na API 17TRACK",
