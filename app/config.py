@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     required_channel: str = "@GeekHunter_Br"
     required_channel_url: str = "https://t.me/GeekHunter_Br"
     required_channel_positive_cache_seconds: int = 600
+    required_channel_check_concurrency: int = 20
 
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
 
