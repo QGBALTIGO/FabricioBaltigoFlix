@@ -8,6 +8,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY scripts/use-headless-opencv.sh scripts/use-headless-opencv.sh
+RUN sh scripts/use-headless-opencv.sh
+
 COPY . .
 
 EXPOSE 8000
