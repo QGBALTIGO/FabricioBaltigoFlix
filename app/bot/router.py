@@ -16,17 +16,8 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("rastrear", handlers.track_cmd))
     app.add_handler(CommandHandler("meus", handlers.my_shipments))
     app.add_handler(CommandHandler("entregues", handlers.delivered))
-    app.add_handler(CommandHandler("buscar", handlers.search_cmd))
-    app.add_handler(CommandHandler("filtros", handlers.filters_cmd))
     app.add_handler(CommandHandler("relatorio", handlers.report_cmd))
-    app.add_handler(
-        CommandHandler("transportadoras", handlers.carriers)
-    )
     app.add_handler(CommandHandler("config", handlers.config_cmd))
-    app.add_handler(
-        CommandHandler("seguranca", handlers.security_cmd)
-    )
-    app.add_handler(CommandHandler("status", handlers.bot_status))
     app.add_handler(
         CommandHandler("privacidade", handlers.privacy_cmd)
     )

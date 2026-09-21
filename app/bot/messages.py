@@ -5,9 +5,10 @@ Acompanhe Correios, Jadlog, J&T, Loggi, LATAM, Azul, Buslog, Total Express e out
 <b>Como usar</b>
 • envie o código de rastreio diretamente;
 • ou use <code>/rastrear CODIGO</code>;
-• eu salvo o pacote e aviso quando houver movimentação;\n• o bot troca de fonte automaticamente se uma delas ficar indisponível.
+• eu salvo o pacote e aviso quando houver movimentação;
+• o bot troca de fonte automaticamente se uma delas ficar indisponível.
 
-Você também pode pesquisar seus rastreios, filtrar por status/transportadora, compartilhar o acompanhamento e receber aviso quando uma encomenda ficar muito tempo sem atualização.
+Você pode acompanhar seus pacotes, compartilhar o rastreio e receber aviso quando uma encomenda ficar muito tempo sem atualização.
 
 🛡 <b>Segurança:</b> nunca enviaremos cobrança, PIX ou boleto para liberar encomendas. Confirme qualquer taxa somente em canais oficiais."""
 
@@ -17,15 +18,10 @@ HELP = """🆘 <b>Ajuda</b>
 /rastrear CODIGO — cadastrar e acompanhar
 /meus — ver pacotes ativos
 /entregues — ver entregues
-/buscar TERMO — procurar por código, nome, transportadora ou status
-/filtros — filtrar por status ou transportadora
 /relatorio — resumo dos seus envios
-/transportadoras NOME — pesquisar transportadoras
 
 <b>Preferências</b>
 /config — como funcionam os alertas
-/seguranca — orientações antifraude
-/status — estado do bot
 /privacidade — dados armazenados
 /cancelar — cancelar uma edição
 /ajuda — esta ajuda
