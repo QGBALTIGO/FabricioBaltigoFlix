@@ -32,6 +32,9 @@ from app.bot.rich import (
     close_rich_client,
 )
 from app.config import get_settings
+from app.http_client import (
+    close_provider_http_client,
+)
 from app.database import (
     SessionLocal,
     get_session,
@@ -193,6 +196,7 @@ async def lifespan(app: FastAPI):
         await telegram_app.shutdown()
 
     await close_rich_client()
+    await close_provider_http_client()
 
 
 app = FastAPI(
