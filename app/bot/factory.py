@@ -19,15 +19,5 @@ def build_telegram_app(
 
 
 async def set_commands(app: Application) -> None:
-    await app.bot.set_my_commands(
-        [
-            BotCommand("rastrear", "Cadastrar/consultar um código"),
-            BotCommand("meus", "Ver pacotes ativos"),
-            BotCommand("entregues", "Ver encomendas entregues"),
-            BotCommand("relatorio", "Resumo dos seus envios"),
-            BotCommand("config", "Preferências de alertas"),
-            BotCommand("privacidade", "Privacidade e dados"),
-            BotCommand("cancelar", "Cancelar uma edição"),
-            BotCommand("ajuda", "Ajuda e comandos"),
-        ]
-    )
+    # O fluxo principal é por texto e botões fixos; não exibe menu de /comandos.
+    await app.bot.delete_my_commands()

@@ -2,10 +2,32 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 from app.models import Subscription
 from app.share import make_share_payload
+
+MAIN_MENU_MY_PACKAGES = "📦 Meus pacotes"
+MAIN_MENU_REMOVE_PACKAGE = "🗑 Remover pacote"
+
+
+def main_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            [
+                KeyboardButton(MAIN_MENU_MY_PACKAGES),
+                KeyboardButton(MAIN_MENU_REMOVE_PACKAGE),
+            ]
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Envie o código de rastreio…",
+    )
 
 
 def shipment_keyboard(
@@ -13,27 +35,60 @@ def shipment_keyboard(
     bot_username: str | None = None,
     share_secret: str = "",
 ) -> InlineKeyboardMarkup:
-    mute_text = "🔔 Ativar alertas" if not sub.notifications_enabled else "🔕 Silenciar"
+    mute_text = (
+        "🔔 Ativar alertas"
+        if not sub.notifications_enabled
+        else "🔕 Silenciar"
+    )
     rows = [
         [
-            InlineKeyboardButton("🔄 Atualizar", callback_data=f"refresh:{sub.id}"),
-            InlineKeyboardButton("📋 Histórico", callback_data=f"history:{sub.id}"),
+            InlineKeyboardButton(
+                "🔄 Atualizar",
+                callback_data=f"refresh:{sub.id}",
+            ),
+            InlineKeyboardButton(
+                "📋 Histórico",
+                callback_data=f"history:{sub.id}",
+            ),
         ],
         [
-            InlineKeyboardButton("ℹ️ Entender status", callback_data=f"explain:{sub.id}"),
-            InlineKeyboardButton("🛡 Segurança", callback_data="security"),
+            InlineKeyboardButton(
+                "ℹ️ Entender status",
+                callback_data=f"explain:{sub.id}",
+            ),
+            InlineKeyboardButton(
+                "🛡 Segurança",
+                callback_data="security",
+            ),
         ],
         [
-            InlineKeyboardButton("✏️ Renomear", callback_data=f"rename:{sub.id}"),
-            InlineKeyboardButton("⚙️ Alertas", callback_data=f"alerts:{sub.id}"),
+            InlineKeyboardButton(
+                "✏️ Renomear",
+                callback_data=f"rename:{sub.id}",
+            ),
+            InlineKeyboardButton(
+                "⚙️ Alertas",
+                callback_data=f"alerts:{sub.id}",
+            ),
         ],
-        [InlineKeyboardButton(mute_text, callback_data=f"mute:{sub.id}")],
+        [
+            InlineKeyboardButton(
+                mute_text,
+                callback_data=f"mute:{sub.id}",
+            )
+        ],
     ]
 
     if bot_username and share_secret:
-        payload = make_share_payload(sub.shipment_id, share_secret)
+        payload = make_share_payload(
+            sub.shipment_id,
+            share_secret,
+        )
         if payload:
-            deep_link = f"https://t.me/{bot_username.lstrip('@')}?start={payload}"
+            deep_link = (
+                f"https://t.me/{bot_username.lstrip('@')}"
+                f"?start={payload}"
+            )
             share_url = (
                 "https://t.me/share/url?url="
                 + quote(deep_link, safe="")
@@ -63,23 +118,31 @@ def shipment_keyboard(
     return InlineKeyboardMarkup(rows)
 
 
-def notify_keyboard(sub: Subscription) -> InlineKeyboardMarkup:
+def notify_keyboard(
+    sub: Subscription,
+) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
                     "⭐ Importantes",
-                    callback_data=f"notify:{sub.id}:important",
+                    callback_data=(
+                        f"notify:{sub.id}:important"
+                    ),
                 ),
                 InlineKeyboardButton(
                     "🔔 Todos",
-                    callback_data=f"notify:{sub.id}:all",
+                    callback_data=(
+                        f"notify:{sub.id}:all"
+                    ),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     "🔕 Sem alertas",
-                    callback_data=f"notify:{sub.id}:off",
+                    callback_data=(
+                        f"notify:{sub.id}:off"
+                    ),
                 )
             ],
         ]
@@ -93,21 +156,37 @@ def list_keyboard(
     list_kind: str,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+
     for sub in subs:
-        s = sub.shipment
-        label = sub.nickname or s.carrier_name or s.tracking_number
+        shipment = sub.shipment
+        label = (
+            sub.nickname
+            or shipment.carrier_name
+            or shipment.tracking_number
+        )
         emoji = {
             "delivered": "✅",
             "out_for_delivery": "🛵",
             "exception": "❗",
             "delivery_failed": "⚠️",
             "customs": "🛃",
-        }.get(s.status, "📦")
+        }.get(
+            shipment.status,
+            "📦",
+        )
+
+        if list_kind == "remove":
+            button_text = f"🗑 {label[:40]}"
+            callback_data = f"delete:{sub.id}"
+        else:
+            button_text = f"{emoji} {label[:40]}"
+            callback_data = f"open:{sub.id}"
+
         rows.append(
             [
                 InlineKeyboardButton(
-                    f"{emoji} {label[:40]}",
-                    callback_data=f"open:{sub.id}",
+                    button_text,
+                    callback_data=callback_data,
                 )
             ]
         )
@@ -117,25 +196,33 @@ def list_keyboard(
         nav.append(
             InlineKeyboardButton(
                 "⬅️",
-                callback_data=f"page:{list_kind}:{page-1}",
+                callback_data=(
+                    f"page:{list_kind}:{page - 1}"
+                ),
             )
         )
+
     if total_pages > 1:
         nav.append(
             InlineKeyboardButton(
-                f"{page+1}/{total_pages}",
+                f"{page + 1}/{total_pages}",
                 callback_data="noop",
             )
         )
+
     if page + 1 < total_pages:
         nav.append(
             InlineKeyboardButton(
                 "➡️",
-                callback_data=f"page:{list_kind}:{page+1}",
+                callback_data=(
+                    f"page:{list_kind}:{page + 1}"
+                ),
             )
         )
+
     if nav:
         rows.append(nav)
+
     return InlineKeyboardMarkup(rows)
 
 
@@ -145,31 +232,43 @@ def filters_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     "🚚 Em trânsito",
-                    callback_data="filterstatus:in_transit",
+                    callback_data=(
+                        "filterstatus:in_transit"
+                    ),
                 ),
                 InlineKeyboardButton(
                     "🛵 Saiu p/ entrega",
-                    callback_data="filterstatus:out_for_delivery",
+                    callback_data=(
+                        "filterstatus:out_for_delivery"
+                    ),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     "⚠️ Problemas",
-                    callback_data="filterstatus:exception",
+                    callback_data=(
+                        "filterstatus:exception"
+                    ),
                 ),
                 InlineKeyboardButton(
                     "🛃 Alfândega",
-                    callback_data="filterstatus:customs",
+                    callback_data=(
+                        "filterstatus:customs"
+                    ),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     "✅ Entregues",
-                    callback_data="filterstatus:delivered",
+                    callback_data=(
+                        "filterstatus:delivered"
+                    ),
                 ),
                 InlineKeyboardButton(
                     "🚚 Por transportadora",
-                    callback_data="filters:carriers",
+                    callback_data=(
+                        "filters:carriers"
+                    ),
                 ),
             ],
             [

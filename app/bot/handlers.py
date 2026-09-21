@@ -257,8 +257,14 @@ async def start(
     await (
         update.effective_message
         .reply_text(
-            WELCOME,
+            WELCOME.format(
+                name=html.escape(
+                    update.effective_user.first_name
+                    or "por aqui"
+                )
+            ),
             parse_mode=ParseMode.HTML,
+            reply_markup=main_menu_keyboard(),
         )
     )
 
@@ -308,10 +314,21 @@ async def track_cmd(
         )
         return
 
+    raw = " ".join(context.args)
+    number, nickname = parse_tracking_input(raw)
+    if not number:
+        await update.effective_message.reply_text(
+            INVALID_CODE,
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
     await add_tracking(
         update,
         context,
-        context.args[0],
+        number,
+        nickname=nickname,
     )
 
 
@@ -324,12 +341,9 @@ async def text_tracking(
         or ""
     ).strip()
 
-    pending = (
-        context.user_data.get(
-            "rename_subscription_id"
-        )
+    pending = context.user_data.get(
+        "rename_subscription_id"
     )
-
     if pending:
         await rename_finish(
             update,
@@ -338,16 +352,34 @@ async def text_tracking(
         )
         return
 
-    if not is_valid_tracking_number(
+    if text == "📦 Meus pacotes":
+        await my_shipments(
+            update,
+            context,
+        )
+        return
+
+    if text == "🗑 Remover pacote":
+        context.user_data["list_state"] = {
+            "mode": "remove"
+        }
+        await _show_list(
+            update,
+            context,
+            page=0,
+        )
+        return
+
+    number, nickname = parse_tracking_input(
         text
-    ):
+    )
+    if not number:
         await (
             update.effective_message
             .reply_text(
                 INVALID_CODE,
-                parse_mode=(
-                    ParseMode.HTML
-                ),
+                parse_mode=ParseMode.HTML,
+                reply_markup=main_menu_keyboard(),
             )
         )
         return
@@ -355,7 +387,8 @@ async def text_tracking(
     await add_tracking(
         update,
         context,
-        text,
+        number,
+        nickname=nickname,
     )
 
 
@@ -363,6 +396,7 @@ async def add_tracking(
     update: Update,
     context: CallbackContext,
     raw: str,
+    nickname: str | None = None,
 ) -> None:
     number = normalize_tracking_number(
         raw
@@ -411,6 +445,7 @@ async def add_tracking(
                 session,
                 user,
                 number,
+                nickname=nickname,
             )
 
             text = fmt_shipment(
@@ -592,6 +627,7 @@ async def _show_list(
     elif mode in {
         "search",
         "filter",
+        "remove",
     }:
         delivered_flag = None
 
@@ -637,6 +673,10 @@ async def _show_list(
             text = (
                 "✅ Você ainda não tem "
                 "encomendas entregues salvas."
+            )
+        elif mode == "remove":
+            text = (
+                "🗑 Você não tem pacotes salvos para remover."
             )
         else:
             text = NO_SHIPMENTS
@@ -690,6 +730,9 @@ async def _show_list(
         "filter": (
             "🎛 <b>Rastreios filtrados</b>"
         ),
+        "remove": (
+            "🗑 <b>Remover pacote</b>"
+        ),
     }.get(
         mode,
         "📦 <b>Rastreios</b>",
@@ -718,12 +761,19 @@ async def _show_list(
         else ""
     )
 
-    text = (
-        f"{title}{suffix}\n\n"
-        f"{total} rastreio(s). "
-        "Toque em um pacote para "
-        "abrir os detalhes."
-    )
+    if mode == "remove":
+        text = (
+            f"{title}{suffix}\n\n"
+            f"{total} pacote(s) salvo(s). "
+            "Toque no pacote que deseja remover."
+        )
+    else:
+        text = (
+            f"{title}{suffix}\n\n"
+            f"{total} rastreio(s). "
+            "Toque em um pacote para "
+            "abrir os detalhes."
+        )
 
     markup = list_keyboard(
         subs,
@@ -1545,8 +1595,7 @@ async def callback(
 
             await query.edit_message_text(
                 (
-                    "🏳️ Você parou de "
-                    "acompanhar este rastreio.\n"
+                    "🗑 <b>Pacote removido.</b>\n"
                     "<code>"
                     f"{html.escape(sub.shipment.tracking_number)}"
                     "</code>"

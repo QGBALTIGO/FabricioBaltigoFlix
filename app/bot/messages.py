@@ -1,37 +1,29 @@
-WELCOME = """📦 <b>Rastreio Baltigo</b>
+WELCOME = """📦 <b>Bem-vindo, {name}!</b>
 
-Acompanhe Correios, Jadlog, J&T, Loggi, LATAM, Azul, Buslog, Total Express e outras fontes em um só lugar.
+Para rastrear uma encomenda, envie o código dela. Se quiser adicionar um nome, digite o código e o nome juntos.
 
-<b>Como usar</b>
-• envie o código de rastreio diretamente;
-• ou use <code>/rastrear CODIGO</code>;
-• eu salvo o pacote e aviso quando houver movimentação;
-• o bot troca de fonte automaticamente se uma delas ficar indisponível.
+<b>Exemplo:</b>
+<code>PN123456789BR Minha encomenda 😊🚚</code>
 
-Você pode acompanhar seus pacotes, compartilhar o rastreio e receber aviso quando uma encomenda ficar muito tempo sem atualização.
+Escolha uma opção no menu abaixo:
 
-🛡 <b>Segurança:</b> nunca enviaremos cobrança, PIX ou boleto para liberar encomendas. Confirme qualquer taxa somente em canais oficiais."""
+• Envie um código de rastreio para cadastrar
+• Use "📦 Meus pacotes" para consultar status
+• Use "🗑 Remover pacote" para excluir um código"""
 
-HELP = """🆘 <b>Ajuda</b>
+HELP = """🆘 <b>Como usar</b>
 
-<b>Rastreios</b>
-/rastrear CODIGO — cadastrar e acompanhar
-/meus — ver pacotes ativos
-/entregues — ver entregues
-/relatorio — resumo dos seus envios
+Envie o código de rastreio diretamente no chat.
 
-<b>Preferências</b>
-/config — como funcionam os alertas
-/privacidade — dados armazenados
-/cancelar — cancelar uma edição
-/ajuda — esta ajuda
+Se quiser dar um nome ao pacote, escreva o código e o nome na mesma mensagem:
 
-<b>Alertas</b>
-⭐ Importantes: postagem/coleta, alfândega, chegada ao destino, saída para entrega, falhas e entrega.
-🔔 Todos: qualquer nova movimentação.
-🔕 Desativado: mantém o pacote salvo sem alertas.
+<code>PN123456789BR Minha encomenda 😊🚚</code>
 
-💡 Você também pode simplesmente enviar um código de rastreio sem comando."""
+Depois use os botões do menu:
+• 📦 Meus pacotes — consultar seus rastreios
+• 🗑 Remover pacote — excluir um código salvo
+
+O bot busca automaticamente e avisa quando houver novas movimentações."""
 
 SECURITY = """🛡 <b>Rastreio seguro</b>
 
@@ -46,7 +38,9 @@ NO_SHIPMENTS = """📭 <b>Nenhuma encomenda ativa.</b>
 
 Envie um código de rastreio para começar."""
 
-INVALID_CODE = """❌ Não reconheci isso como um código de rastreio.
+INVALID_CODE = """❌ Não reconheci um código de rastreio válido.
 
-Envie apenas o código (5 a 50 caracteres, letras, números ou hífen) ou use:
-<code>/rastrear CODIGO</code>"""
+Envie o código sozinho ou junto com um nome.
+
+<b>Exemplo:</b>
+<code>PN123456789BR Minha encomenda 😊🚚</code>"""
