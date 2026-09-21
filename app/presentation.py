@@ -10,6 +10,7 @@ from app.models import Shipment, Subscription, TrackingEvent
 from app.services.insights import action_advice
 from app.status import status_label
 from app.utils import (
+    humanize_age,
     parse_datetime,
     parse_datetime_assuming_timezone,
 )
@@ -288,38 +289,98 @@ def extract_tracking_metadata(
     )
 
 
-def _card_context(subscription, shipment, timezone_name, event):
-    status = event.status if event else shipment.status
-    event_at = event.event_at if event else shipment.last_event_at
-    location = event.location if event else shipment.last_location
+def _card_context(
+    subscription,
+    shipment,
+    timezone_name,
+    event,
+):
+    status = (
+        event.status
+        if event
+        else shipment.status
+    )
+    event_at = (
+        event.event_at
+        if event
+        else shipment.last_event_at
+    )
+    location = (
+        event.location
+        if event
+        else shipment.last_location
+    )
 
-    origin, destination, eta, source_time = extract_tracking_metadata(
-        shipment,
-        event_at,
+    origin, destination, eta, source_time = (
+        extract_tracking_metadata(
+            shipment,
+            event_at,
+        )
     )
 
     display_time = source_time
     if not display_time and event_at:
-        display_time = _short_datetime(event_at, timezone_name)
+        display_time = _short_datetime(
+            event_at,
+            timezone_name,
+        )
+
+    description = None
+    if event:
+        description = getattr(
+            event,
+            "description",
+            None,
+        )
+    if not description:
+        description = getattr(
+            shipment,
+            "last_description",
+            None,
+        )
+    description = (
+        _clean_route(
+            description
+        )
+        or STATUS_DETAILS.get(
+            status,
+            STATUS_DETAILS["unknown"],
+        )
+    )
+
+    updated_age = (
+        humanize_age(
+            event_at
+        )
+        if event_at
+        else None
+    )
 
     return {
         "name": html.escape(
             subscription.nickname
-            or shipment.carrier_name
             or "Minha encomenda"
         ),
-        "number": html.escape(shipment.tracking_number),
+        "number": html.escape(
+            shipment.tracking_number
+        ),
         "carrier": html.escape(
             shipment.carrier_name
             or "Transportadora em detecção"
         ),
-        "title": STATUS_HEADLINES.get(status, STATUS_HEADLINES["unknown"]),
-        "detail": STATUS_DETAILS.get(status, STATUS_DETAILS["unknown"]),
+        "status": html.escape(
+            status_label(
+                status
+            )
+        ),
+        "status_code": status,
+        "detail": description,
         "location": location,
         "origin": origin,
         "destination": destination,
         "eta": eta,
         "display_time": display_time,
+        "updated_age": updated_age,
     }
 
 
@@ -330,60 +391,105 @@ def format_tracking_card(
     *,
     event: TrackingEvent | None = None,
 ) -> str:
-    ctx = _card_context(subscription, shipment, timezone_name, event)
+    ctx = _card_context(
+        subscription,
+        shipment,
+        timezone_name,
+        event,
+    )
+
     lines = [
         (
             "<blockquote>"
-            f"🔎 <code>{ctx['number']}</code>\n"
-            f"<i>{ctx['name']}</i>"
+            f"<b>📦 {ctx['name']}</b>\n"
+            f"<code>{ctx['number']}</code>\n"
+            f"🚚 <i>{ctx['carrier']}</i>"
             "</blockquote>"
         ),
         "",
-        f"📦 <b>Transportadora:</b> {ctx['carrier']}",
-        "",
+        f"<b>{ctx['status']}</b>",
     ]
 
-    headline = html.escape(ctx["title"])
+    update_parts: list[str] = []
     if ctx["display_time"]:
-        headline = f"{ctx['display_time']} | {headline}"
-    lines.append(f"<b>{headline}</b>")
-    lines.extend(["", html.escape(ctx["detail"])])
-    action_title, _ = action_advice(
-        event.status if event else shipment.status
-    )
-    lines.extend([
-        "",
-        "💡 <b>Agora:</b> "
-        + html.escape(action_title),
-    ])
+        update_parts.append(
+            f"<i>{html.escape(ctx['display_time'])}</i>"
+        )
+    if ctx["detail"]:
+        update_parts.append(
+            html.escape(
+                ctx["detail"]
+            )
+        )
+    if update_parts:
+        lines.extend(
+            [
+                "",
+                "🕐 <b>Última atualização</b>",
+                *update_parts,
+            ]
+        )
 
-    if ctx["origin"] and ctx["destination"]:
-        lines.extend([
-            "",
-            (
-                "📍 <b>"
-                f"{html.escape(ctx['origin'])}"
-                " → "
-                f"{html.escape(ctx['destination'])}"
-                "</b>"
-            ),
-        ])
+    if (
+        ctx["origin"]
+        and ctx["destination"]
+    ):
+        lines.extend(
+            [
+                "",
+                (
+                    "📍 <b>Rota atual</b>\n"
+                    f"{html.escape(ctx['origin'])}"
+                    " → "
+                    f"{html.escape(ctx['destination'])}"
+                ),
+            ]
+        )
     elif ctx["location"]:
-        lines.extend([
-            "",
-            f"📍 <b>{html.escape(str(ctx['location']))}</b>",
-        ])
+        lines.extend(
+            [
+                "",
+                "📍 <b>Local atual</b>\n"
+                + html.escape(
+                    str(
+                        ctx["location"]
+                    )
+                ),
+            ]
+        )
 
-    if ctx["eta"]:
-        lines.extend([
-            "",
-            (
-                "📅 <b>Previsão de entrega:</b> "
-                f"<i>{html.escape(ctx['eta'])}</i>"
-            ),
-        ])
+    if (
+        ctx["eta"]
+        and ctx["status_code"]
+        != "delivered"
+    ):
+        lines.extend(
+            [
+                "",
+                (
+                    "📅 <b>Previsão de entrega</b>\n"
+                    f"{html.escape(ctx['eta'])}"
+                ),
+            ]
+        )
 
-    return "\n".join(lines)
+    if ctx["updated_age"]:
+        lines.extend(
+            [
+                "",
+                (
+                    "🕒 <i>Atualizado "
+                    + html.escape(
+                        ctx["updated_age"]
+                    )
+                    + "</i>"
+                ),
+            ]
+        )
+
+    return "\n".join(
+        lines
+    )
 
 
 def format_tracking_rich_html(
@@ -394,59 +500,98 @@ def format_tracking_rich_html(
     event: TrackingEvent | None = None,
     warning: str | None = None,
 ) -> str:
-    ctx = _card_context(subscription, shipment, timezone_name, event)
+    ctx = _card_context(
+        subscription,
+        shipment,
+        timezone_name,
+        event,
+    )
 
     top = (
         "<aside>"
-        f"🔎 <code>{ctx['number']}</code><br>"
-        f"<i>{ctx['name']}</i>"
+        f"<b>📦 {ctx['name']}</b><br>"
+        f"<code>{ctx['number']}</code><br>"
+        f"🚚 <i>{ctx['carrier']}</i>"
         "</aside>"
     )
 
     rows = [
         (
             "<tr><td>"
-            f"📦 <b>Transportadora:</b> {ctx['carrier']}"
+            f"<b>{ctx['status']}</b>"
             "</td></tr>"
         )
     ]
 
-    headline = html.escape(ctx["title"])
+    update_bits: list[str] = [
+        "🕐 <b>Última atualização</b>"
+    ]
     if ctx["display_time"]:
-        headline = f"{ctx['display_time']} | {headline}"
-    rows.append(f"<tr><td><b>{headline}</b></td></tr>")
-    rows.append(f"<tr><td>{html.escape(ctx['detail'])}</td></tr>")
-    action_title, _ = action_advice(
-        event.status if event else shipment.status
-    )
+        update_bits.append(
+            "<i>"
+            + html.escape(
+                ctx["display_time"]
+            )
+            + "</i>"
+        )
+    if ctx["detail"]:
+        update_bits.append(
+            html.escape(
+                ctx["detail"]
+            )
+        )
     rows.append(
-        "<tr><td>💡 <b>Agora:</b> "
-        + html.escape(action_title)
+        "<tr><td>"
+        + "<br>".join(
+            update_bits
+        )
         + "</td></tr>"
     )
 
-    if ctx["origin"] and ctx["destination"]:
+    if (
+        ctx["origin"]
+        and ctx["destination"]
+    ):
         rows.append(
             "<tr><td>"
-            "📍 "
-            f"<b>{html.escape(ctx['origin'])}</b>"
+            "📍 <b>Rota atual</b><br>"
+            f"{html.escape(ctx['origin'])}"
             " → "
-            f"<b>{html.escape(ctx['destination'])}</b>"
+            f"{html.escape(ctx['destination'])}"
             "</td></tr>"
         )
     elif ctx["location"]:
         rows.append(
             "<tr><td>"
-            "📍 "
-            f"<b>{html.escape(str(ctx['location']))}</b>"
+            "📍 <b>Local atual</b><br>"
+            + html.escape(
+                str(
+                    ctx["location"]
+                )
+            )
+            + "</td></tr>"
+        )
+
+    if (
+        ctx["eta"]
+        and ctx["status_code"]
+        != "delivered"
+    ):
+        rows.append(
+            "<tr><td>"
+            "📅 <b>Previsão de entrega</b><br>"
+            f"{html.escape(ctx['eta'])}"
             "</td></tr>"
         )
 
-    if ctx["eta"]:
+    if ctx["updated_age"]:
         rows.append(
             "<tr><td>"
-            "📅 <b>Previsão de entrega:</b> "
-            f"<i>{html.escape(ctx['eta'])}</i>"
+            "🕒 <i>Atualizado "
+            + html.escape(
+                ctx["updated_age"]
+            )
+            + "</i>"
             "</td></tr>"
         )
 
@@ -457,7 +602,12 @@ def format_tracking_rich_html(
             "</td></tr>"
         )
 
-    return top + "<table bordered>" + "".join(rows) + "</table>"
+    return (
+        top
+        + "<table bordered>"
+        + "".join(rows)
+        + "</table>"
+    )
 
 
 
