@@ -319,6 +319,10 @@ class DeferredNotification(Base):
         ForeignKey("tracking_events.id", ondelete="CASCADE"),
         index=True,
     )
+    event_count: Mapped[int] = mapped_column(
+        Integer,
+        default=1,
+    )
     deliver_after: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
     )
