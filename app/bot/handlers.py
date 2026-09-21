@@ -184,6 +184,18 @@ def fmt_shipment(
     )
 
 
+def _alert_toggle_toast(enabled: bool) -> str:
+    if enabled:
+        return (
+            "🔔 Alertas ativados! "
+            "Vou te avisar sobre novas movimentações."
+        )
+    return (
+        "🔕 Alertas desativados. "
+        "Você não receberá novas atualizações."
+    )
+
+
 async def _edit_tracking_card(
     context: CallbackContext,
     message,
@@ -1202,7 +1214,11 @@ async def callback(
 ) -> None:
     query = update.callback_query
     data = query.data or ""
-    await query.answer()
+
+    # O toggle de alertas responde depois da alteração para exibir
+    # um toast nativo do Telegram com o novo estado.
+    if not data.startswith("mute:"):
+        await query.answer()
 
     if data == "noop":
         return
@@ -1652,6 +1668,12 @@ async def callback(
                 )
 
             await session.commit()
+
+            await query.answer(
+                _alert_toggle_toast(
+                    sub.notifications_enabled
+                )
+            )
 
             await _edit_tracking_card(
                 context,
