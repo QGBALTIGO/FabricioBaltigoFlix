@@ -11,8 +11,17 @@ from app.models import Base
 
 settings = get_settings()
 
+
+def normalize_async_database_url(url: str) -> str:
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://"):]
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://"):]
+    return url
+
+
 engine = create_async_engine(
-    settings.database_url,
+    normalize_async_database_url(settings.database_url),
     pool_pre_ping=True,
 )
 
