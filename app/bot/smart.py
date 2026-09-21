@@ -27,7 +27,6 @@ from app.models import (
     User,
 )
 from app.services.insights import (
-    action_advice,
     estimate_delivery_window,
     format_delivery_estimate,
     package_bucket,
@@ -191,13 +190,14 @@ async def offer_smart_candidates(
     return True
 
 
-async def today_cmd(
+async def overview_cmd(
     update: Update,
     context: CallbackContext,
 ) -> None:
     if not await _require_member(update, context):
         return
-    text, markup = await _build_today(
+
+    text, markup = await _build_overview(
         update,
         context,
     )
@@ -206,6 +206,10 @@ async def today_cmd(
         parse_mode=ParseMode.HTML,
         reply_markup=markup,
     )
+
+
+# Compatibilidade com comandos/botões antigos já enviados no Telegram.
+today_cmd = overview_cmd
 
 
 async def _load_user_subscriptions(
@@ -240,7 +244,58 @@ async def _load_user_subscriptions(
     return user, subs
 
 
-async def _build_today(
+def _overview_summary_lines(
+    buckets: dict[str, list[Subscription]],
+) -> list[str]:
+    lines: list[str] = []
+
+    counts = {
+        key: len(value)
+        for key, value in buckets.items()
+    }
+
+    if counts["out_for_delivery"]:
+        count = counts["out_for_delivery"]
+        verb = "saiu" if count == 1 else "saíram"
+        lines.append(
+            f"🛵 <b>{count} {verb} para entrega</b>"
+        )
+
+    if counts["near"]:
+        count = counts["near"]
+        verb = "chegou" if count == 1 else "chegaram"
+        lines.append(
+            f"📍 <b>{count} {verb} à região de destino</b>"
+        )
+
+    if counts["attention"]:
+        count = counts["attention"]
+        verb = "precisa" if count == 1 else "precisam"
+        lines.append(
+            f"⚠️ <b>{count} {verb} de atenção</b>"
+        )
+
+    if counts["transit"]:
+        count = counts["transit"]
+        lines.append(
+            f"🚚 <b>{count} em trânsito</b>"
+        )
+
+    if counts["delivered_today"]:
+        count = counts["delivered_today"]
+        label = (
+            "entregue hoje"
+            if count == 1
+            else "entregues hoje"
+        )
+        lines.append(
+            f"✅ <b>{count} {label}</b>"
+        )
+
+    return lines
+
+
+async def _build_overview(
     update: Update,
     context: CallbackContext,
 ) -> tuple[str, InlineKeyboardMarkup]:
@@ -268,16 +323,16 @@ async def _build_today(
             if bucket in buckets:
                 buckets[bucket].append(sub)
 
-        priority = (
+        highlights = (
             buckets["out_for_delivery"]
             + buckets["attention"]
             + buckets["near"]
         )
-        if not priority:
-            priority = buckets["transit"]
+        if not highlights:
+            highlights = buckets["transit"]
 
         estimate_by_sub: dict[int, str] = {}
-        for sub in priority[:3]:
+        for sub in highlights[:3]:
             estimate = await estimate_delivery_window(
                 session,
                 sub.shipment,
@@ -291,65 +346,93 @@ async def _build_today(
 
     if not subs:
         text = (
-            "🏠 <b>Hoje</b>\n\n"
-            "Você ainda não acompanha nenhuma encomenda.\n\n"
-            "Envie um código, encaminhe a mensagem da loja ou mande um print do pedido."
+            "📦 <b>Visão geral</b>\n\n"
+            "Nenhuma encomenda acompanhada por enquanto.\n"
+            "Envie um código, uma mensagem da loja ou um print para começar."
         )
     else:
         text_lines = [
-            "🏠 <b>Hoje</b>",
+            "📦 <b>Visão geral</b>",
             "",
-            f"🛵 <b>Sai para entrega:</b> {len(buckets['out_for_delivery'])}",
-            f"📍 <b>Chegando perto:</b> {len(buckets['near'])}",
-            f"⚠️ <b>Precisam de atenção:</b> {len(buckets['attention'])}",
-            f"📦 <b>Em trânsito:</b> {len(buckets['transit'])}",
-            f"✅ <b>Entregues hoje:</b> {len(buckets['delivered_today'])}",
         ]
 
-        if priority:
+        summary = _overview_summary_lines(
+            buckets
+        )
+        if summary:
+            text_lines.extend(summary)
+        else:
+            text_lines.append(
+                "Nenhuma movimentação em destaque no momento."
+            )
+
+        if highlights:
             text_lines.extend(
                 [
                     "",
-                    "<b>Prioridades</b>",
+                    "<b>Em destaque</b>",
                 ]
             )
-            for sub in priority[:5]:
+
+            for sub in highlights[:3]:
                 shipment = sub.shipment
-                label = (
+                name = (
                     sub.nickname
                     or shipment.carrier_name
                     or shipment.tracking_number
                 )
-                text_lines.append(
-                    "• "
-                    + status_label(shipment.status)
-                    + " — <b>"
-                    + html.escape(label[:80])
-                    + "</b>"
+                status = status_label(
+                    shipment.status
                 )
-                prediction = estimate_by_sub.get(sub.id)
+                parts = status.split(
+                    " ",
+                    1,
+                )
+                emoji = parts[0]
+                label = (
+                    parts[1]
+                    if len(parts) > 1
+                    else status
+                )
+
+                text_lines.append(
+                    f"{emoji} <b>{html.escape(name[:80])}</b> — "
+                    f"{html.escape(label)}"
+                )
+
+                prediction = estimate_by_sub.get(
+                    sub.id
+                )
                 if prediction:
                     text_lines.append(
-                        "  🤖 "
+                        "   <i>Previsão estimada: "
                         + html.escape(prediction)
+                        + "</i>"
                     )
 
         text = "\n".join(text_lines)
 
     rows: list[list[InlineKeyboardButton]] = []
-    for key, emoji, label in (
-        ("out_for_delivery", "🛵", "Entrega"),
+    button_specs = (
+        ("out_for_delivery", "🛵", "Para entrega"),
         ("attention", "⚠️", "Atenção"),
-        ("transit", "📦", "Em trânsito"),
-        ("delivered_today", "✅", "Hoje"),
-    ):
-        count = len(buckets[key])
+        ("near", "📍", "Na região"),
+        ("transit", "🚚", "Em trânsito"),
+        ("delivered_today", "✅", "Entregues"),
+    )
+
+    for key, emoji, label in button_specs:
+        count = len(
+            buckets[key]
+        )
         if count:
             rows.append(
                 [
                     InlineKeyboardButton(
-                        f"{emoji} {label} ({count})",
-                        callback_data=f"todaylist:{key}",
+                        f"{emoji} {label} · {count}",
+                        callback_data=(
+                            f"overviewlist:{key}"
+                        ),
                     )
                 ]
             )
@@ -358,14 +441,71 @@ async def _build_today(
         [
             InlineKeyboardButton(
                 "🔄 Atualizar",
-                callback_data="today:refresh",
+                callback_data="overview:refresh",
             )
         ]
     )
+
     return text, InlineKeyboardMarkup(rows)
 
 
-async def _today_list(
+def _overview_list_copy(
+    bucket_name: str,
+    count: int,
+) -> tuple[str, str]:
+    singular = count == 1
+
+    if bucket_name == "out_for_delivery":
+        return (
+            "🛵 <b>Saiu para entrega</b>",
+            (
+                "1 encomenda está a caminho do endereço de entrega."
+                if singular
+                else f"{count} encomendas estão a caminho do endereço de entrega."
+            ),
+        )
+
+    if bucket_name == "near":
+        return (
+            "📍 <b>Na região de destino</b>",
+            (
+                "1 encomenda já chegou à região de destino."
+                if singular
+                else f"{count} encomendas já chegaram à região de destino."
+            ),
+        )
+
+    if bucket_name == "attention":
+        return (
+            "⚠️ <b>Atenção</b>",
+            (
+                "1 encomenda tem uma atualização que merece atenção."
+                if singular
+                else f"{count} encomendas têm atualizações que merecem atenção."
+            ),
+        )
+
+    if bucket_name == "delivered_today":
+        return (
+            "✅ <b>Entregues hoje</b>",
+            (
+                "1 encomenda foi entregue hoje."
+                if singular
+                else f"{count} encomendas foram entregues hoje."
+            ),
+        )
+
+    return (
+        "🚚 <b>Em trânsito</b>",
+        (
+            "1 encomenda segue em movimentação."
+            if singular
+            else f"{count} encomendas seguem em movimentação."
+        ),
+    )
+
+
+async def _overview_list(
     update: Update,
     context: CallbackContext,
     bucket_name: str,
@@ -388,14 +528,10 @@ async def _today_list(
         == bucket_name
     ]
 
-    labels = {
-        "out_for_delivery": "🛵 Sai para entrega",
-        "attention": "⚠️ Precisam de atenção",
-        "transit": "📦 Em trânsito",
-        "delivered_today": "✅ Entregues hoje",
-        "near": "📍 Chegando perto",
-    }
-    title = labels.get(bucket_name, "📦 Encomendas")
+    title, description = _overview_list_copy(
+        bucket_name,
+        len(filtered),
+    )
 
     rows: list[list[InlineKeyboardButton]] = []
     for sub in filtered[:20]:
@@ -405,10 +541,17 @@ async def _today_list(
             or shipment.carrier_name
             or shipment.tracking_number
         )
+        emoji = status_label(
+            shipment.status
+        ).split(
+            " ",
+            1,
+        )[0]
+
         rows.append(
             [
                 InlineKeyboardButton(
-                    f"{status_label(shipment.status).split(' ', 1)[0]} {name[:42]}",
+                    f"{emoji} {name[:42]}",
                     callback_data=f"open:{sub.id}",
                 )
             ]
@@ -417,17 +560,19 @@ async def _today_list(
     rows.append(
         [
             InlineKeyboardButton(
-                "⬅️ Voltar para Hoje",
-                callback_data="today:refresh",
+                "⬅️ Visão geral",
+                callback_data="overview:refresh",
             )
         ]
     )
 
-    return (
-        f"{title}\n\n<b>{len(filtered)}</b> encomenda(s). "
-        "Toque para abrir os detalhes.",
-        InlineKeyboardMarkup(rows),
+    text = (
+        f"{title}\n\n"
+        f"{description}\n\n"
+        "Selecione uma encomenda para abrir o rastreio."
     )
+
+    return text, InlineKeyboardMarkup(rows)
 
 
 def _alert_menu_markup(
@@ -704,9 +849,9 @@ async def smart_callback(
 
     data = query.data or ""
 
-    if data == "today:refresh":
+    if data in {"overview:refresh", "today:refresh"}:
         await query.answer()
-        text, markup = await _build_today(
+        text, markup = await _build_overview(
             update,
             context,
         )
@@ -717,10 +862,13 @@ async def smart_callback(
         )
         return
 
-    if data.startswith("todaylist:"):
+    if (
+        data.startswith("overviewlist:")
+        or data.startswith("todaylist:")
+    ):
         await query.answer()
         bucket_name = data.split(":", 1)[1]
-        text, markup = await _today_list(
+        text, markup = await _overview_list(
             update,
             context,
             bucket_name,
@@ -802,39 +950,6 @@ async def smart_callback(
                 text,
                 parse_mode=ParseMode.HTML,
                 reply_markup=markup,
-            )
-            return
-
-        if data.startswith("assist:"):
-            title, body = action_advice(
-                sub.shipment.status
-            )
-            detail = (
-                str(sub.shipment.last_description or "").strip()
-            )
-            text = (
-                "🧭 <b>O que fazer agora?</b>\n\n"
-                f"{status_label(sub.shipment.status)}\n"
-                f"<b>{html.escape(title)}</b>\n\n"
-                f"{html.escape(body)}"
-            )
-            if detail:
-                text += (
-                    "\n\n<blockquote>"
-                    + html.escape(detail[:700])
-                    + "</blockquote>"
-                )
-            await query.edit_message_text(
-                text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup(
-                    [[
-                        InlineKeyboardButton(
-                            "⬅️ Voltar ao rastreio",
-                            callback_data=f"open:{sub.id}",
-                        )
-                    ]]
-                ),
             )
             return
 
