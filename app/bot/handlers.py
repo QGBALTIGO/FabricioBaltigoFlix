@@ -1541,7 +1541,7 @@ async def callback(
                     events,
                     settings.display_timezone,
                     page=page,
-                    events_per_page=4,
+                    events_per_page=3,
                 )
             )
             markup = history_keyboard(
@@ -1569,7 +1569,7 @@ async def callback(
                         events,
                         settings.display_timezone,
                         page=page,
-                        events_per_page=4,
+                        events_per_page=3,
                     )
                 )
                 await query.edit_message_text(
