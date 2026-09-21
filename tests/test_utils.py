@@ -71,3 +71,23 @@ def test_parse_datetime_assuming_timezone_for_naive_brazil_time():
 
     assert dt.hour == 16
     assert dt.utcoffset() == timedelta(hours=-3)
+
+
+
+def test_invalid_datetime_does_not_become_now():
+    from app.utils import (
+        INVALID_TIMESTAMP_FALLBACK,
+        parse_datetime,
+        parse_datetime_assuming_timezone,
+    )
+
+    assert parse_datetime(
+        "data-quebrada"
+    ) == INVALID_TIMESTAMP_FALLBACK
+    assert parse_datetime(
+        None
+    ) == INVALID_TIMESTAMP_FALLBACK
+    assert parse_datetime_assuming_timezone(
+        "data-quebrada",
+        "America/Sao_Paulo",
+    ) == INVALID_TIMESTAMP_FALLBACK
