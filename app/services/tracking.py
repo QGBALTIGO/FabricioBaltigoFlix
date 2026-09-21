@@ -47,6 +47,7 @@ class TrackingService:
         self.settings = settings
         self._tracking_locks: dict[str, asyncio.Lock] = {}
         self._refresh_locks: dict[int, asyncio.Lock] = {}
+        self._provider_semaphores: dict[str, asyncio.Semaphore] = {}
 
         self.melhor = (
             MelhorRastreioProvider(settings.http_timeout_seconds)
@@ -504,13 +505,29 @@ class TrackingService:
             provider: Any,
         ):
             try:
-                data = await asyncio.wait_for(
-                    self._query_provider(
-                        provider,
-                        shipment,
-                    ),
-                    timeout=timeout,
+                semaphore = (
+                    self._provider_semaphores
+                    .setdefault(
+                        provider.name,
+                        asyncio.Semaphore(
+                            max(
+                                1,
+                                self.settings
+                                .provider_concurrency_per_source,
+                            )
+                        ),
+                    )
                 )
+
+                async with semaphore:
+                    data = await asyncio.wait_for(
+                        self._query_provider(
+                            provider,
+                            shipment,
+                        ),
+                        timeout=timeout,
+                    )
+
                 return (
                     provider,
                     data,
