@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from app.bot.keyboards import shipment_keyboard
+from app.bot.keyboards import (
+    MAIN_MENU_TODAY,
+    main_menu_keyboard,
+    shipment_keyboard,
+)
 
 
 def _texts(markup):
@@ -29,6 +33,8 @@ def test_shipment_keyboard_has_only_requested_actions_when_enabled():
     assert texts == [
         "📋 Histórico",
         "🔕 Desativar alerta",
+        "⚙️ Alertas",
+        "🧭 O que fazer?",
         "🔗 Compartilhar rastreio",
     ]
 
@@ -50,5 +56,20 @@ def test_shipment_keyboard_alert_toggle_when_disabled():
     assert _texts(markup) == [
         "📋 Histórico",
         "🔔 Ativar alerta",
+        "⚙️ Alertas",
+        "🧭 O que fazer?",
         "🔗 Compartilhar rastreio",
     ]
+
+
+def test_main_menu_exposes_today_dashboard():
+    markup = main_menu_keyboard()
+    texts = [
+        button.text
+        for row in markup.keyboard
+        for button in row
+    ]
+
+    assert MAIN_MENU_TODAY == "🏠 Hoje"
+    assert texts[0] == "🏠 Hoje"
+    assert "📦 Meus pacotes" in texts
