@@ -56,3 +56,18 @@ def test_handler_exposes_tracking_input_parser():
         "AP499229999BR",
         "Placa 10k",
     )
+
+
+
+def test_parse_datetime_assuming_timezone_for_naive_brazil_time():
+    from datetime import timedelta
+
+    from app.utils import parse_datetime_assuming_timezone
+
+    dt = parse_datetime_assuming_timezone(
+        "2026-09-18 16:40:00",
+        "America/Sao_Paulo",
+    )
+
+    assert dt.hour == 16
+    assert dt.utcoffset() == timedelta(hours=-3)

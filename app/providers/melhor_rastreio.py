@@ -12,7 +12,7 @@ from app.providers.base import (
     ProviderUnavailable,
 )
 from app.status import normalize_status
-from app.utils import parse_datetime
+from app.utils import parse_datetime_assuming_timezone
 
 
 TRACKER_LABELS = {
@@ -251,7 +251,10 @@ class MelhorRastreioProvider:
                 location = ", ".join(parts) or None
 
             status = normalize_status(title, description)
-            event_at = parse_datetime(raw.get("createdAt"))
+            event_at = parse_datetime_assuming_timezone(
+                raw.get("createdAt"),
+                "America/Sao_Paulo",
+            )
 
             events.append(
                 ProviderEvent(

@@ -7,22 +7,15 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app.models import Shipment, Subscription, TrackingEvent
-from app.utils import parse_datetime
-
+from app.utils import (
+    parse_datetime,
+    parse_datetime_assuming_timezone,
+)
 
 MONTHS_PT = {
-    1: "Jan.",
-    2: "Fev.",
-    3: "Mar.",
-    4: "Abr.",
-    5: "Mai.",
-    6: "Jun.",
-    7: "Jul.",
-    8: "Ago.",
-    9: "Set.",
-    10: "Out.",
-    11: "Nov.",
-    12: "Dez.",
+    1: "Jan.", 2: "Fev.", 3: "Mar.", 4: "Abr.",
+    5: "Mai.", 6: "Jun.", 7: "Jul.", 8: "Ago.",
+    9: "Set.", 10: "Out.", 11: "Nov.", 12: "Dez.",
 }
 
 STATUS_HEADLINES = {
@@ -66,16 +59,32 @@ def _safe_extra(shipment: Shipment) -> dict:
         return {}
 
 
-def _local_datetime(value: datetime, timezone_name: str) -> datetime:
+def _short_datetime(value: datetime, timezone_name: str) -> str:
     try:
         tz = ZoneInfo(timezone_name)
     except Exception:
         tz = timezone.utc
-    return parse_datetime(value).astimezone(tz)
+    dt = parse_datetime(value).astimezone(tz)
+    return f"{dt.day:02d} {MONTHS_PT[dt.month]} - {dt:%H:%M}"
 
 
-def _short_datetime(value: datetime, timezone_name: str) -> str:
-    dt = _local_datetime(value, timezone_name)
+def _source_datetime(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = parse_datetime_assuming_timezone(
+            value,
+            "America/Sao_Paulo",
+        )
+        return dt.astimezone(ZoneInfo("America/Sao_Paulo"))
+    except Exception:
+        return None
+
+
+def _short_source_datetime(value) -> str | None:
+    dt = _source_datetime(value)
+    if not dt:
+        return None
     return f"{dt.day:02d} {MONTHS_PT[dt.month]} - {dt:%H:%M}"
 
 
@@ -83,15 +92,12 @@ def _format_delivery_date(value) -> str | None:
     if not value:
         return None
     text = str(value).strip()
-
     iso = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text)
     if iso:
         return f"{iso.group(3)}/{iso.group(2)}/{iso.group(1)}"
-
     br = re.match(r"^(\d{2})/(\d{2})/(\d{4})", text)
     if br:
         return br.group(0)
-
     return text[:20] or None
 
 
@@ -102,49 +108,135 @@ def _clean_route(value) -> str | None:
     return text or None
 
 
-def _matching_raw_event(
-    raw_events: list[dict],
-    event_at: datetime | None,
-) -> dict:
+def _correios_unit(unit) -> str | None:
+    if not isinstance(unit, dict):
+        return None
+    address = unit.get("endereco") or {}
+    if not isinstance(address, dict):
+        address = {}
+    city = address.get("cidade") or unit.get("cidade")
+    state = address.get("uf") or unit.get("uf")
+    if city and state:
+        return f"{str(city).strip()}/{str(state).strip()}"
+    if city:
+        return str(city).strip()
+    return _clean_route(unit.get("nome"))
+
+
+def _normalized_raw_events(raw: dict) -> list[dict]:
+    events = raw.get("trackingEvents") or []
+    if isinstance(events, dict):
+        events = [events]
+    result = [dict(x) for x in events if isinstance(x, dict)]
+    if result:
+        return result
+
+    objects = raw.get("objetos") or []
+    if not objects or not isinstance(objects[0], dict):
+        return []
+
+    output = []
+    for item in objects[0].get("eventos") or []:
+        if not isinstance(item, dict):
+            continue
+        created = item.get("dtHrCriado")
+        if isinstance(created, dict):
+            created = created.get("date")
+        output.append({
+            "createdAt": created,
+            "from": _correios_unit(item.get("unidade")),
+            "to": _correios_unit(item.get("unidadeDestino")),
+        })
+    return output
+
+
+def _matching_raw_event(raw_events: list[dict], event_at) -> dict:
     if not raw_events:
         return {}
 
-    if event_at is None:
-        return max(
-            raw_events,
-            key=lambda item: parse_datetime(item.get("createdAt")),
+    def dt(item):
+        return (
+            _source_datetime(item.get("createdAt"))
+            or datetime.min.replace(tzinfo=timezone.utc)
         )
+
+    if event_at is None:
+        return max(raw_events, key=dt)
 
     target = parse_datetime(event_at).astimezone(timezone.utc)
     return min(
         raw_events,
         key=lambda item: abs(
-            (
-                parse_datetime(item.get("createdAt")).astimezone(timezone.utc)
-                - target
-            ).total_seconds()
+            (dt(item).astimezone(timezone.utc) - target).total_seconds()
         ),
     )
 
 
-def extract_route_and_eta(
+def extract_tracking_metadata(
     shipment: Shipment,
-    event_at: datetime | None = None,
-) -> tuple[str | None, str | None, str | None]:
+    event_at=None,
+) -> tuple[str | None, str | None, str | None, str | None]:
     raw = _safe_extra(shipment)
-    raw_events = raw.get("trackingEvents") or []
-    if isinstance(raw_events, dict):
-        raw_events = [raw_events]
-    raw_events = [
-        item for item in raw_events
-        if isinstance(item, dict)
-    ]
+    matched = _matching_raw_event(
+        _normalized_raw_events(raw),
+        event_at,
+    )
 
-    matched = _matching_raw_event(raw_events, event_at)
     origin = _clean_route(matched.get("from"))
     destination = _clean_route(matched.get("to"))
-    eta = _format_delivery_date(raw.get("estimatedDelivery"))
-    return origin, destination, eta
+
+    eta_value = raw.get("estimatedDelivery")
+    if not eta_value:
+        objects = raw.get("objetos") or []
+        if objects and isinstance(objects[0], dict):
+            obj = objects[0]
+            eta_value = (
+                obj.get("dtPrevista")
+                or obj.get("dataPrevista")
+                or obj.get("previsaoEntrega")
+            )
+
+    return (
+        origin,
+        destination,
+        _format_delivery_date(eta_value),
+        _short_source_datetime(matched.get("createdAt")),
+    )
+
+
+def _card_context(subscription, shipment, timezone_name, event):
+    status = event.status if event else shipment.status
+    event_at = event.event_at if event else shipment.last_event_at
+    location = event.location if event else shipment.last_location
+
+    origin, destination, eta, source_time = extract_tracking_metadata(
+        shipment,
+        event_at,
+    )
+
+    display_time = source_time
+    if not display_time and event_at:
+        display_time = _short_datetime(event_at, timezone_name)
+
+    return {
+        "name": html.escape(
+            subscription.nickname
+            or shipment.carrier_name
+            or "Minha encomenda"
+        ),
+        "number": html.escape(shipment.tracking_number),
+        "carrier": html.escape(
+            shipment.carrier_name
+            or "Transportadora em detecção"
+        ),
+        "title": STATUS_HEADLINES.get(status, STATUS_HEADLINES["unknown"]),
+        "detail": STATUS_DETAILS.get(status, STATUS_DETAILS["unknown"]),
+        "location": location,
+        "origin": origin,
+        "destination": destination,
+        "eta": eta,
+        "display_time": display_time,
+    }
 
 
 def format_tracking_card(
@@ -154,106 +246,52 @@ def format_tracking_card(
     *,
     event: TrackingEvent | None = None,
 ) -> str:
-    current_status = event.status if event else shipment.status
-    current_time = (
-        event.event_at
-        if event
-        else shipment.last_event_at
-    )
-    current_location = (
-        event.location
-        if event
-        else shipment.last_location
-    )
-
-    name = html.escape(
-        subscription.nickname
-        or shipment.carrier_name
-        or "Minha encomenda"
-    )
-    number = html.escape(shipment.tracking_number)
-    carrier = html.escape(
-        shipment.carrier_name
-        or "Transportadora em detecção"
-    )
-
-    title = STATUS_HEADLINES.get(
-        current_status,
-        STATUS_HEADLINES["unknown"],
-    )
-    detail = STATUS_DETAILS.get(
-        current_status,
-        STATUS_DETAILS["unknown"],
-    )
-
-    origin, destination, eta = extract_route_and_eta(
-        shipment,
-        current_time,
-    )
-
+    ctx = _card_context(subscription, shipment, timezone_name, event)
     lines = [
         (
             "<blockquote>"
-            f"🔎 <code>{number}</code>\n"
-            f"<i>{name}</i>"
+            f"🔎 <code>{ctx['number']}</code>\n"
+            f"<i>{ctx['name']}</i>"
             "</blockquote>"
         ),
         "",
-        f"📦 <b>Transportadora:</b> {carrier}",
+        f"📦 <b>Transportadora:</b> {ctx['carrier']}",
         "",
     ]
 
-    if current_time:
-        lines.append(
-            f"<b>{_short_datetime(current_time, timezone_name)} | "
-            f"{html.escape(title)}</b>"
-        )
-    else:
-        lines.append(
-            f"<b>{html.escape(title)}</b>"
-        )
+    headline = html.escape(ctx["title"])
+    if ctx["display_time"]:
+        headline = f"{ctx['display_time']} | {headline}"
+    lines.append(f"<b>{headline}</b>")
+    lines.extend(["", html.escape(ctx["detail"])])
 
-    lines.extend(
-        [
+    if ctx["origin"] and ctx["destination"]:
+        lines.extend([
             "",
-            html.escape(detail),
-        ]
-    )
+            (
+                "📍 <b>"
+                f"{html.escape(ctx['origin'])}"
+                " → "
+                f"{html.escape(ctx['destination'])}"
+                "</b>"
+            ),
+        ])
+    elif ctx["location"]:
+        lines.extend([
+            "",
+            f"📍 <b>{html.escape(str(ctx['location']))}</b>",
+        ])
 
-    if origin and destination:
-        lines.extend(
-            [
-                "",
-                (
-                    "📍 <b>"
-                    f"{html.escape(origin)}"
-                    " → "
-                    f"{html.escape(destination)}"
-                    "</b>"
-                ),
-            ]
-        )
-    elif current_location:
-        lines.extend(
-            [
-                "",
-                f"📍 <b>{html.escape(str(current_location))}</b>",
-            ]
-        )
-
-    if eta:
-        lines.extend(
-            [
-                "",
-                (
-                    "📅 <b>Previsão de entrega:</b> "
-                    f"<i>{html.escape(eta)}</i>"
-                ),
-            ]
-        )
+    if ctx["eta"]:
+        lines.extend([
+            "",
+            (
+                "📅 <b>Previsão de entrega:</b> "
+                f"<i>{html.escape(ctx['eta'])}</i>"
+            ),
+        ])
 
     return "\n".join(lines)
-
 
 
 def format_tracking_rich_html(
@@ -264,93 +302,57 @@ def format_tracking_rich_html(
     event: TrackingEvent | None = None,
     warning: str | None = None,
 ) -> str:
-    """Telegram Rich Message HTML using pull quote + bordered table."""
-    current_status = event.status if event else shipment.status
-    current_time = event.event_at if event else shipment.last_event_at
-    current_location = event.location if event else shipment.last_location
-
-    name = html.escape(
-        subscription.nickname
-        or shipment.carrier_name
-        or "Minha encomenda"
-    )
-    number = html.escape(shipment.tracking_number)
-    carrier = html.escape(
-        shipment.carrier_name
-        or "Transportadora em detecção"
-    )
-
-    title = STATUS_HEADLINES.get(
-        current_status,
-        STATUS_HEADLINES["unknown"],
-    )
-    detail = STATUS_DETAILS.get(
-        current_status,
-        STATUS_DETAILS["unknown"],
-    )
-
-    origin, destination, eta = extract_route_and_eta(
-        shipment,
-        current_time,
-    )
+    ctx = _card_context(subscription, shipment, timezone_name, event)
 
     top = (
         "<aside>"
-        f"🔎 <code>{number}</code><br>"
-        f"<i>{name}</i>"
+        f"🔎 <code>{ctx['number']}</code><br>"
+        f"<i>{ctx['name']}</i>"
         "</aside>"
     )
 
-    rows: list[str] = [
+    rows = [
         (
             "<tr><td>"
-            f"📦 <b>Transportadora:</b> {carrier}"
+            f"📦 <b>Transportadora:</b> {ctx['carrier']}"
             "</td></tr>"
         )
     ]
 
-    if current_time:
-        headline = (
-            f"{_short_datetime(current_time, timezone_name)} | "
-            f"{html.escape(title)}"
-        )
-    else:
-        headline = html.escape(title)
+    headline = html.escape(ctx["title"])
+    if ctx["display_time"]:
+        headline = f"{ctx['display_time']} | {headline}"
+    rows.append(f"<tr><td><b>{headline}</b></td></tr>")
+    rows.append(f"<tr><td>{html.escape(ctx['detail'])}</td></tr>")
 
-    rows.append(
-        f"<tr><td><b>{headline}</b></td></tr>"
-    )
-    rows.append(
-        f"<tr><td>{html.escape(detail)}</td></tr>"
-    )
-
-    if origin and destination:
+    if ctx["origin"] and ctx["destination"]:
         rows.append(
             "<tr><td>"
-            f"📍 <b>{html.escape(origin)}</b>"
-            " - Destino: "
-            f"<b>{html.escape(destination)}</b>"
+            "📍 "
+            f"<b>{html.escape(ctx['origin'])}</b>"
+            " → "
+            f"<b>{html.escape(ctx['destination'])}</b>"
             "</td></tr>"
         )
-    elif current_location:
+    elif ctx["location"]:
         rows.append(
             "<tr><td>"
-            f"📍 <b>{html.escape(str(current_location))}</b>"
+            "📍 "
+            f"<b>{html.escape(str(ctx['location']))}</b>"
             "</td></tr>"
         )
 
-    if eta:
+    if ctx["eta"]:
         rows.append(
             "<tr><td>"
             "📅 <b>Previsão de entrega:</b> "
-            f"<i>{html.escape(eta)}</i>"
+            f"<i>{html.escape(ctx['eta'])}</i>"
             "</td></tr>"
         )
 
     if warning:
         rows.append(
-            "<tr><td>"
-            "⚠️ "
+            "<tr><td>⚠️ "
             f"{html.escape(warning)}"
             "</td></tr>"
         )

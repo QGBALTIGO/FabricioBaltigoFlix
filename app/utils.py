@@ -57,6 +57,33 @@ def parse_datetime(value) -> datetime:
     return datetime.now(timezone.utc)
 
 
+def parse_datetime_assuming_timezone(
+    value,
+    timezone_name: str,
+) -> datetime:
+    """Parse a timestamp, attaching timezone_name only when the source is naive."""
+    try:
+        tz = ZoneInfo(timezone_name)
+    except Exception:
+        tz = timezone.utc
+
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=tz)
+
+    if not value:
+        return datetime.now(timezone.utc)
+
+    text = str(value).strip().replace("Z", "+00:00")
+    for candidate in (text, text.replace(" ", "T")):
+        try:
+            dt = datetime.fromisoformat(candidate)
+            return dt if dt.tzinfo else dt.replace(tzinfo=tz)
+        except ValueError:
+            pass
+
+    return parse_datetime(value)
+
+
 def mask_tracking_number(number: str) -> str:
     if len(number) <= 8:
         return number

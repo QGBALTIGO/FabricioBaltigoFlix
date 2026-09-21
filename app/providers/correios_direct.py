@@ -12,7 +12,7 @@ from app.providers.base import (
     ProviderUnavailable,
 )
 from app.status import normalize_status
-from app.utils import parse_datetime
+from app.utils import parse_datetime_assuming_timezone
 
 
 class CorreiosDirectProvider:
@@ -102,7 +102,10 @@ class CorreiosDirectProvider:
                     status_raw=description,
                     description=description,
                     location=location,
-                    event_at=parse_datetime(created),
+                    event_at=parse_datetime_assuming_timezone(
+                        created,
+                        "America/Sao_Paulo",
+                    ),
                 )
             )
 
