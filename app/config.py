@@ -23,11 +23,13 @@ class Settings(BaseSettings):
     webhook_base_url: str = ""
     telegram_concurrent_updates: int = 64
     telegram_update_queue_size: int = 10000
+    telegram_webhook_max_connections: int = 100
 
     required_channel_enabled: bool = True
     required_channel: str = "@GeekHunter_Br"
     required_channel_url: str = "https://t.me/GeekHunter_Br"
     required_channel_positive_cache_seconds: int = 600
+    required_channel_check_concurrency: int = 20
 
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
 
@@ -72,7 +74,7 @@ class Settings(BaseSettings):
     monitor_tick_minutes: int = 1
     poll_tracking_days: int = 90
     poll_request_spacing_seconds: float = 0.25
-    poll_concurrency: int = 8
+    poll_concurrency: int = 12
     poll_batch_size: int = 500
 
     poll_unknown_minutes: int = 20
@@ -82,6 +84,8 @@ class Settings(BaseSettings):
     poll_exception_minutes: int = 10
 
     notification_send_spacing_seconds: float = 0.04
+    notification_batch_size: int = 20
+    notification_batch_pause_seconds: float = 1.0
     broadcast_batch_size: int = 25
     broadcast_batch_pause_seconds: float = 1.0
 
