@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app.models import Shipment, Subscription, TrackingEvent
-from app.services.insights import action_advice
 from app.status import status_label
 from app.utils import (
     humanize_age,
@@ -22,32 +21,32 @@ MONTHS_PT = {
 }
 
 STATUS_HEADLINES = {
-    "unknown": "Aguardando informações do seu pacote.",
-    "info_received": "Seu pacote foi registrado.",
-    "picked_up": "Seu pacote foi recebido pela transportadora.",
-    "in_transit": "Seu pacote está em movimentação.",
-    "customs": "Seu pacote está em fiscalização.",
-    "arrived_destination": "Seu pacote chegou à região de destino.",
-    "out_for_delivery": "Seu pacote saiu para entrega.",
-    "available_for_pickup": "Seu pacote está disponível para retirada.",
+    "unknown": "Aguardando informações da sua encomenda.",
+    "info_received": "Sua encomenda foi registrada.",
+    "picked_up": "Sua encomenda foi recebida pela transportadora.",
+    "in_transit": "Sua encomenda está em movimentação.",
+    "customs": "Sua encomenda está em fiscalização.",
+    "arrived_destination": "Sua encomenda chegou à região de destino.",
+    "out_for_delivery": "Sua encomenda saiu para entrega.",
+    "available_for_pickup": "Sua encomenda está disponível para retirada.",
     "delivery_failed": "A entrega não pôde ser concluída.",
     "exception": "Há uma ocorrência no transporte.",
-    "returned": "Seu pacote está em devolução.",
-    "delivered": "Seu pacote foi entregue.",
+    "returned": "Sua encomenda está em devolução.",
+    "delivered": "Sua encomenda foi entregue.",
 }
 
 STATUS_DETAILS = {
     "unknown": "Ainda não há movimentações suficientes para detalhar o trajeto.",
-    "info_received": "Os dados do envio foram recebidos e o pacote aguarda a próxima movimentação.",
+    "info_received": "Os dados do envio foram recebidos e a encomenda aguarda a próxima movimentação.",
     "picked_up": "A encomenda entrou na operação da transportadora e seguirá para o próximo centro logístico.",
-    "in_transit": "O pacote está transitando entre a agência e o centro de distribuição mais próximo.",
+    "in_transit": "A encomenda está em trânsito entre unidades da transportadora.",
     "customs": "A encomenda está em análise fiscal ou aduaneira antes de seguir viagem.",
-    "arrived_destination": "O pacote chegou à região de destino e deve seguir para a etapa local de entrega.",
-    "out_for_delivery": "O pacote está com a equipe responsável pela entrega ao destinatário.",
-    "available_for_pickup": "O pacote está aguardando retirada no ponto ou unidade indicada pela transportadora.",
+    "arrived_destination": "A encomenda chegou à região de destino e deve seguir para a etapa local de entrega.",
+    "out_for_delivery": "A encomenda está com a equipe responsável pela entrega ao destinatário.",
+    "available_for_pickup": "A encomenda está aguardando retirada no ponto ou unidade indicada pela transportadora.",
     "delivery_failed": "Houve uma tentativa de entrega sem conclusão. Uma nova tentativa ou retirada pode ser necessária.",
     "exception": "A transportadora registrou uma ocorrência que pode alterar o andamento normal da entrega.",
-    "returned": "O pacote entrou no fluxo de devolução ao remetente.",
+    "returned": "A encomenda entrou no fluxo de devolução ao remetente.",
     "delivered": "A transportadora registrou a entrega como concluída.",
 }
 
@@ -366,7 +365,7 @@ def _card_context(
         ),
         "carrier": html.escape(
             shipment.carrier_name
-            or "Transportadora em detecção"
+            or "Identificando transportadora"
         ),
         "status": html.escape(
             status_label(
@@ -668,9 +667,6 @@ def format_tracking_notification_rich_html(
         "</aside>"
     )
 
-    action_title, _ = action_advice(
-        event.status
-    )
     rows = [
         (
             "<tr><td>"
@@ -681,11 +677,6 @@ def format_tracking_notification_rich_html(
         (
             "<tr><td>"
             f"{html.escape(description)}"
-            "</td></tr>"
-        ),
-        (
-            "<tr><td>💡 <b>Agora:</b> "
-            f"{html.escape(action_title)}"
             "</td></tr>"
         ),
     ]
@@ -777,9 +768,6 @@ def format_tracking_notification_fallback(
         or "Movimentação registrada."
     )
 
-    action_title, _ = action_advice(
-        event.status
-    )
     lines = [
         "🔔 <b>Nova atualização</b>",
         f"🔎 <code>{html.escape(shipment.tracking_number)}</code>",
@@ -789,9 +777,6 @@ def format_tracking_notification_fallback(
         f"<i>{html.escape(display_time)}</i>",
         "",
         html.escape(description),
-        "",
-        "💡 <b>Agora:</b> "
-        + html.escape(action_title),
     ]
 
     if new_events_count > 1:
