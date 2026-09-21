@@ -22,7 +22,7 @@ TRACKING_KEYWORD_RE = re.compile(
     r"rastreio|rastreamento|tracking(?:\s*(?:code|number|no))?|"
     r"awb|objeto|remessa|shipment)"
     r"\s*[:#\-]?\s*"
-    r"([A-Z0-9][A-Z0-9\-\s]{4,55})",
+    r"([A-Z0-9][A-Z0-9\-]{4,49})",
     re.IGNORECASE,
 )
 TOKEN_RE = re.compile(
