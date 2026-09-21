@@ -288,19 +288,30 @@ def _remove_packages_text(total: int) -> str:
 
 def _add_package_help_text() -> str:
     return (
-        "➕ <b>Adicionar nova encomenda</b>\n\n"
-        "Envie o <b>código de rastreio</b> "
-        "diretamente no chat.\n\n"
-        "<b>Somente o código:</b>\n"
+        "➕ <b>Adicionar encomenda</b>\n\n"
+        "Você pode adicionar de três jeitos:\n\n"
+
+        "🔎 <b>Enviar o código</b>\n"
         "<code>AB123456789BR</code>\n\n"
-        "<b>Código + nome:</b>\n"
+
+        "Se quiser dar um nome à encomenda:\n"
         "<code>AB123456789BR Teclado gamer</code>\n\n"
+
+        "📨 <b>Encaminhar a mensagem</b>\n"
+        "Pode mandar a mensagem completa da loja ou transportadora. "
+        "Eu procuro o código de rastreio e mostro o que encontrei para você confirmar.\n\n"
+
+        "📸 <b>Enviar uma foto</b>\n"
+        "Mande uma foto da etiqueta ou uma captura de tela do pedido. "
+        "Eu tento ler QR Code, código de barras e o texto da imagem.\n\n"
+
         "<blockquote>"
-        "O nome é opcional e serve apenas para "
-        "você identificar a encomenda com mais facilidade."
+        "Nada é salvo sem sua confirmação quando o código é encontrado "
+        "em uma mensagem ou imagem."
         "</blockquote>\n"
-        "Depois de enviar, eu identifico a transportadora "
-        "e começo a acompanhar a encomenda automaticamente. 🚚"
+
+        "Depois de confirmar, eu identifico a transportadora e começo "
+        "a acompanhar a encomenda automaticamente. 🚚"
     )
 
 
