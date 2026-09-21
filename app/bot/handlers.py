@@ -26,18 +26,15 @@ from telegram.ext import CallbackContext
 
 from app.bot.keyboards import (
     add_package_help_keyboard,
-    filters_keyboard,
     history_keyboard,
     list_keyboard,
     main_menu_keyboard,
-    notify_keyboard,
     shipment_keyboard,
 )
 from app.bot.messages import (
     HELP,
     INVALID_CODE,
     NO_SHIPMENTS,
-    SECURITY,
     WELCOME,
 )
 from app.bot.rich import (
@@ -61,15 +58,11 @@ from app.presentation import (
 )
 from app.share import verify_share_payload
 from app.status import (
-    status_explanation,
     status_label,
 )
 from app.utils import (
-    format_datetime,
     humanize_age,
-    is_stale,
     is_valid_tracking_number,
-    mentions_payment,
     normalize_tracking_number,
     parse_tracking_input,
 )
@@ -486,19 +479,6 @@ async def help_cmd(
     )
 
 
-async def security_cmd(
-    update: Update,
-    context: CallbackContext,
-) -> None:
-    await (
-        update.effective_message
-        .reply_text(
-            SECURITY,
-            parse_mode=ParseMode.HTML,
-        )
-    )
-
-
 async def track_cmd(
     update: Update,
     context: CallbackContext,
@@ -544,17 +524,6 @@ async def text_tracking(
         update.effective_message.text
         or ""
     ).strip()
-
-    pending = context.user_data.get(
-        "rename_subscription_id"
-    )
-    if pending:
-        await rename_finish(
-            update,
-            context,
-            text,
-        )
-        return
 
     if text == "📦 Meus pacotes":
         await my_shipments(
@@ -716,75 +685,6 @@ async def delivered(
         update,
         context,
         page=0,
-    )
-
-
-async def search_cmd(
-    update: Update,
-    context: CallbackContext,
-) -> None:
-    query = " ".join(
-        context.args
-    ).strip()
-
-    if not query:
-        await (
-            update.effective_message
-            .reply_text(
-                (
-                    "🔎 Use "
-                    "<code>/buscar TERMO</code>. "
-                    "Você pode procurar por "
-                    "código, apelido, "
-                    "transportadora ou "
-                    "texto/status do rastreio."
-                ),
-                parse_mode=(
-                    ParseMode.HTML
-                ),
-            )
-        )
-        return
-
-    context.user_data[
-        "list_state"
-    ] = {
-        "mode": "search",
-        "query": query,
-    }
-
-    await _show_list(
-        update,
-        context,
-        page=0,
-    )
-
-
-async def filters_cmd(
-    update: Update,
-    context: CallbackContext,
-) -> None:
-    await _ensure_current_user(
-        update,
-        context,
-    )
-
-    await (
-        update.effective_message
-        .reply_text(
-            (
-                "🎛 <b>Filtros inteligentes</b>\n\n"
-                "Escolha um status ou filtre "
-                "por transportadora. "
-                "Você também pode usar "
-                "/buscar para combinar "
-                "uma busca por texto."
-            ),
-            parse_mode=ParseMode.HTML,
-            reply_markup=(
-                filters_keyboard()
-            ),
-        )
     )
 
 
@@ -1230,109 +1130,6 @@ async def config_cmd(
     )
 
 
-async def bot_status(
-    update: Update,
-    context: CallbackContext,
-) -> None:
-    async with SessionLocal() as session:
-        users = await session.scalar(select(func.count(User.id)))
-        shipments = await session.scalar(select(func.count(Shipment.id)))
-        active = await session.scalar(
-            select(func.count(Shipment.id)).where(Shipment.is_active.is_(True))
-        )
-
-    providers = []
-    if settings.melhor_rastreio_enabled:
-        providers.append("Melhor Rastreio GraphQL ✅")
-    if settings.direct_fallbacks_enabled:
-        providers.append("Fallbacks diretos ✅")
-    if settings.seventeen_track_token:
-        providers.append("17TRACK opcional ✅")
-    if settings.ship24_api_key:
-        providers.append("Ship24 opcional ✅")
-
-    if not providers:
-        providers.append("Nenhuma fonte ⚠️")
-
-    poller = (
-        "✅ inteligente"
-        if settings.tracking_poller_enabled
-        else "desativado"
-    )
-
-    await update.effective_message.reply_text(
-        (
-            "🟢 <b>"
-            f"{html.escape(settings.app_name)}"
-            "</b>\n\n"
-            f"Fontes: {', '.join(providers)}\n"
-            f"Polling: {poller}\n"
-            f"Usuários: {users or 0}\n"
-            f"Encomendas: {shipments or 0}\n"
-            f"Ativas: {active or 0}"
-        ),
-        parse_mode=ParseMode.HTML,
-    )
-
-
-async def carriers(
-    update: Update,
-    context: CallbackContext,
-) -> None:
-    query = " ".join(context.args).strip().lower()
-
-    catalog = [
-        ("Correios", "Melhor Rastreio + fallback direto"),
-        ("Jadlog", "Melhor Rastreio + fallback direto"),
-        ("J&T Express", "Melhor Rastreio"),
-        ("Loggi", "Melhor Rastreio"),
-        ("LATAM Cargo", "Melhor Rastreio"),
-        ("Azul Cargo", "Melhor Rastreio"),
-        ("Buslog", "Melhor Rastreio"),
-        ("Viação Mundo", "Melhor Rastreio"),
-        ("Melhor Envio", "Melhor Rastreio"),
-        ("Total Express", "fallback direto"),
-    ]
-
-    if query:
-        catalog = [
-            item
-            for item in catalog
-            if query in item[0].lower()
-        ]
-
-    if not catalog:
-        await update.effective_message.reply_text(
-            "Nenhuma transportadora encontrada nesse catálogo."
-        )
-        return
-
-    lines = [
-        "🚚 <b>Transportadoras disponíveis</b>",
-        "",
-    ]
-    for name, source in catalog:
-        lines.append(
-            "• "
-            + html.escape(name)
-            + " — "
-            + html.escape(source)
-        )
-
-    lines.extend(
-        [
-            "",
-            "💡 Você não precisa escolher a transportadora na maioria dos casos: "
-            "envie o código e o bot tenta as fontes automaticamente.",
-        ]
-    )
-
-    await update.effective_message.reply_text(
-        "\n".join(lines),
-        parse_mode=ParseMode.HTML,
-    )
-
-
 async def callback(
     update: Update,
     context: CallbackContext,
@@ -1346,13 +1143,6 @@ async def callback(
         await query.answer()
 
     if data == "noop":
-        return
-
-    if data == "security":
-        await query.message.reply_text(
-            SECURITY,
-            parse_mode=ParseMode.HTML,
-        )
         return
 
     if data == "packages:add":
@@ -1402,161 +1192,6 @@ async def callback(
                 0,
                 int(raw_page),
             ),
-            edit=True,
-        )
-        return
-
-    if data.startswith(
-        "filterstatus:"
-    ):
-        status = data.split(
-            ":",
-            1,
-        )[1]
-
-        context.user_data[
-            "list_state"
-        ] = {
-            "mode": "filter",
-            "status": status,
-        }
-
-        await _show_list(
-            update,
-            context,
-            page=0,
-            edit=True,
-        )
-        return
-
-    if data == "filters:clear":
-        context.user_data[
-            "list_state"
-        ] = {
-            "mode": "active"
-        }
-
-        await _show_list(
-            update,
-            context,
-            page=0,
-            edit=True,
-        )
-        return
-
-    if data == "filters:carriers":
-        async with SessionLocal() as session:
-            user = await session.scalar(
-                select(User).where(
-                    User.telegram_id
-                    == update
-                    .effective_user.id
-                )
-            )
-
-            choices = (
-                await service(
-                    context
-                ).carriers_for_user(
-                    session,
-                    user.id,
-                )
-                if user
-                else []
-            )
-
-        context.user_data[
-            "carrier_choices"
-        ] = choices
-
-        if not choices:
-            await (
-                query.edit_message_text(
-                    "🚚 Você ainda não tem "
-                    "transportadoras identificadas "
-                    "nos seus rastreios."
-                )
-            )
-            return
-
-        rows = [
-            [
-                InlineKeyboardButton(
-                    name[:45],
-                    callback_data=(
-                        f"filtercarrier:{i}"
-                    ),
-                )
-            ]
-            for i, name in enumerate(
-                choices[:25]
-            )
-        ]
-
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    "🧹 Limpar filtros",
-                    callback_data=(
-                        "filters:clear"
-                    ),
-                )
-            ]
-        )
-
-        await query.edit_message_text(
-            (
-                "🚚 <b>Filtrar por "
-                "transportadora</b>"
-            ),
-            parse_mode=ParseMode.HTML,
-            reply_markup=(
-                InlineKeyboardMarkup(
-                    rows
-                )
-            ),
-        )
-        return
-
-    if data.startswith(
-        "filtercarrier:"
-    ):
-        index = int(
-            data.split(
-                ":",
-                1,
-            )[1]
-        )
-        choices = (
-            context.user_data.get(
-                "carrier_choices"
-            )
-            or []
-        )
-
-        if index >= len(choices):
-            await query.answer(
-                (
-                    "Filtro expirou. "
-                    "Use /filtros novamente."
-                ),
-                show_alert=True,
-            )
-            return
-
-        context.user_data[
-            "list_state"
-        ] = {
-            "mode": "filter",
-            "carrier": choices[
-                index
-            ],
-        }
-
-        await _show_list(
-            update,
-            context,
-            page=0,
             edit=True,
         )
         return
@@ -1765,59 +1400,8 @@ async def callback(
                     ),
                 )
 
-        elif action == "explain":
-            await (
-                query.message
-                .reply_text(
-                    (
-                        status_label(
-                            sub.shipment.status
-                        )
-                        + "\n\n"
-                        + html.escape(
-                            status_explanation(
-                                sub.shipment.status
-                            )
-                        )
-                    ),
-                    parse_mode=(
-                        ParseMode.HTML
-                    ),
-                )
-            )
 
-        elif action == "rename":
-            context.user_data[
-                "rename_subscription_id"
-            ] = sub.id
 
-            await (
-                query.message
-                .reply_text(
-                    "✏️ Envie agora o novo "
-                    "nome/apelido dessa encomenda "
-                    "(até 120 caracteres)."
-                )
-            )
-
-        elif action == "alerts":
-            await (
-                query.message
-                .reply_text(
-                    (
-                        "🔔 <b>Como você quer "
-                        "receber as atualizações?</b>"
-                    ),
-                    parse_mode=(
-                        ParseMode.HTML
-                    ),
-                    reply_markup=(
-                        notify_keyboard(
-                            sub
-                        )
-                    ),
-                )
-            )
 
         elif action == "mute":
             sub.notifications_enabled = (
@@ -1848,31 +1432,6 @@ async def callback(
                 sub,
             )
 
-        elif (
-            action == "notify"
-            and len(parts) >= 3
-        ):
-            level = parts[2]
-
-            if level not in {
-                "important",
-                "all",
-                "off",
-            }:
-                return
-
-            sub.notify_level = level
-            sub.notifications_enabled = (
-                level != "off"
-            )
-
-            await session.commit()
-
-            await _edit_tracking_card(
-                context,
-                query.message,
-                sub,
-            )
 
         elif action == "delete":
             sub.is_active = False
@@ -1893,74 +1452,6 @@ async def callback(
                     ParseMode.HTML
                 ),
             )
-
-
-async def rename_finish(
-    update: Update,
-    context: CallbackContext,
-    text: str,
-) -> None:
-    sub_id = context.user_data.pop(
-        "rename_subscription_id",
-        None,
-    )
-
-    if not sub_id:
-        return
-
-    name = text.strip()[:120]
-
-    if not name:
-        await (
-            update.effective_message
-            .reply_text(
-                "Nome inválido."
-            )
-        )
-        return
-
-    async with SessionLocal() as session:
-        user = await session.scalar(
-            select(User).where(
-                User.telegram_id
-                == update.effective_user.id
-            )
-        )
-
-        sub = (
-            await service(
-                context
-            ).get_subscription(
-                session,
-                user.id,
-                sub_id,
-            )
-            if user
-            else None
-        )
-
-        if not sub:
-            await (
-                update.effective_message
-                .reply_text(
-                    "Rastreio não encontrado."
-                )
-            )
-            return
-
-        sub.nickname = name
-        await session.commit()
-
-        await (
-            update.effective_message.reply_text(
-                "✅ Nome atualizado."
-            )
-        )
-        await _send_tracking_card(
-            context,
-            update.effective_chat.id,
-            sub,
-        )
 
 
 async def admin(
@@ -2164,10 +1655,6 @@ async def cancel_cmd(
     update: Update,
     context: CallbackContext,
 ) -> None:
-    context.user_data.pop(
-        "rename_subscription_id",
-        None,
-    )
     await (
         update.effective_message
         .reply_text(
