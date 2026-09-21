@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -23,6 +23,7 @@ from app.intake import (
     ocr_text_from_image_bytes,
 )
 from app.models import (
+    DeferredNotification,
     Shipment,
     Subscription,
     User,
@@ -930,6 +931,21 @@ async def smart_callback(
             }
             if preset == "off":
                 user_pref.quiet_hours_enabled = False
+                # Alerts already queued for the quiet window should not stay
+                # asleep after the user explicitly disables silence.
+                await session.execute(
+                    update(DeferredNotification)
+                    .where(
+                        DeferredNotification.subscription_id.in_(
+                            select(Subscription.id).where(
+                                Subscription.user_id == user.id
+                            )
+                        )
+                    )
+                    .values(
+                        deliver_after=datetime.now(timezone.utc)
+                    )
+                )
             elif preset in presets:
                 start, end = presets[preset]
                 user_pref.quiet_hours_enabled = True
