@@ -135,7 +135,10 @@ def _normalize_candidate(
         return None
     if not any(ch.isdigit() for ch in number):
         return None
-    if not any(ch.isalpha() for ch in number):
+    if (
+        not allow_numeric
+        and not any(ch.isalpha() for ch in number)
+    ):
         return None
     return number
 
