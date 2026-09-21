@@ -19,6 +19,7 @@ def register_handlers(app: Application) -> None:
     # Alias antigo mantido apenas por compatibilidade.
     app.add_handler(CommandHandler("hoje", smart.overview_cmd))
     app.add_handler(CommandHandler("entregues", handlers.delivered))
+    app.add_handler(CommandHandler("arquivo", handlers.archive))
     app.add_handler(CommandHandler("relatorio", handlers.report_cmd))
     app.add_handler(CommandHandler("config", handlers.config_cmd))
     app.add_handler(
