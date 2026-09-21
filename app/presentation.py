@@ -903,7 +903,14 @@ def format_tracking_history_rich_page(
             "</td></tr>"
         )
 
-    for event in group:
+    for index, event in enumerate(group):
+        if index > 0:
+            # Keep each tracking update visually separated in Telegram Rich
+            # Messages without changing the content or grouping of the event.
+            rows.append(
+                "<tr><td><br></td></tr>"
+            )
+
         rows.extend(
             _history_event_rows(
                 shipment,
