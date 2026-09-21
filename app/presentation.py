@@ -132,6 +132,88 @@ def _normalized_raw_events(raw: dict) -> list[dict]:
     if result:
         return result
 
+    tracking = raw.get("tracking") or []
+    if isinstance(tracking, dict):
+        tracking = [tracking]
+
+    if tracking and isinstance(tracking[0], dict):
+        output = []
+
+        def normalize_route_piece(
+            value: str,
+        ) -> str:
+            value = re.sub(
+                r"\s*/\s*",
+                "/",
+                value,
+            )
+            value = re.sub(
+                r"\s+em\s+",
+                " - ",
+                value,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            return re.sub(
+                r"\s+",
+                " ",
+                value,
+            ).strip()
+
+        for item in (
+            tracking[0].get("Posicoes")
+            or []
+        ):
+            if not isinstance(item, dict):
+                continue
+
+            details_formatted = str(
+                item.get("DetalhesFormatado")
+                or ""
+            ).replace("\r", " ").replace(
+                "\n",
+                " ",
+            )
+            details_formatted = re.sub(
+                r"\s+",
+                " ",
+                details_formatted,
+            ).strip()
+
+            origin = None
+            destination = None
+            route = re.search(
+                r"\bSaiu de (.+?) para (.+)$",
+                details_formatted,
+                flags=re.IGNORECASE,
+            )
+            if route:
+                origin = normalize_route_piece(
+                    route.group(1)
+                )
+                destination = normalize_route_piece(
+                    route.group(2)
+                )
+
+            output.append(
+                {
+                    "createdAt": item.get("Data"),
+                    "description": (
+                        item.get("Acao")
+                        or "Atualização"
+                    ),
+                    "from": origin,
+                    "to": destination,
+                    "additionalInfo": (
+                        item.get("Detalhes")
+                        or None
+                    ),
+                }
+            )
+
+        if output:
+            return output
+
     objects = raw.get("objetos") or []
     if not objects or not isinstance(objects[0], dict):
         return []

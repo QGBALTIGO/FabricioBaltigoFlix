@@ -146,3 +146,20 @@ async def test_query_best_provider_compares_all_healthy_sources(
             )
         ),
     )
+
+
+
+def test_freshness_prefers_rastreador_pacotes_on_same_time():
+    rastreador = _tracking(
+        "rastreador_pacotes",
+        "2026-09-21T08:49:19-03:00",
+    )
+    proxy = _tracking(
+        "correios_direct",
+        "2026-09-21T08:49:19-03:00",
+    )
+
+    assert (
+        TrackingService._provider_freshness_key(rastreador)
+        > TrackingService._provider_freshness_key(proxy)
+    )
