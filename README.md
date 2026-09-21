@@ -64,6 +64,7 @@ Comandos principais:
 
 - /rastrear CODIGO
 - /meus
+- /resumo
 - /entregues
 - /buscar TERMO
 - /filtros
@@ -87,17 +88,19 @@ Além do código puro, o bot pode:
 - detectar, quando presentes, loja, número do pedido e nome do produto;
 - pedir confirmação antes de cadastrar qualquer código detectado automaticamente.
 
-### Central Hoje
+### Visão geral
 
-O botão **🏠 Hoje** resume as encomendas por prioridade:
+O botão **📦 Visão geral** resume o estado atual dos pacotes sem exibir categorias zeradas.
+
+Ele destaca apenas o que existe no momento:
 
 - saiu para entrega;
-- chegando perto;
-- precisam de atenção;
-- em trânsito;
-- entregues no dia.
+- chegou à região de destino;
+- precisa de atenção;
+- está em trânsito;
+- foi entregue no dia.
 
-Quando há histórico suficiente da mesma transportadora, o painel também calcula uma janela estimada usando entregas anteriores em vez de inventar uma data sem amostra.
+Quando há histórico suficiente da mesma transportadora, a visão geral também pode mostrar uma janela estimada usando entregas anteriores, sem inventar datas quando não há amostra suficiente.
 
 ### Alertas avançados
 
@@ -111,9 +114,9 @@ Cada pacote possui um único botão **🔔 Alertas**. Dentro dele, o usuário po
 
 Não há horários silenciosos: as notificações habilitadas são enviadas assim que a movimentação é processada.
 
-### Assistente de ocorrência
+### Orientação de status
 
-Cada cartão mostra uma orientação curta em **💡 Agora** e o botão **🧭 O que fazer?** explica o próximo passo de acordo com o status atual.
+Cada cartão pode mostrar uma orientação curta em **💡 Agora**, integrada ao próprio rastreio, sem criar um botão ou tela extra.
 
 ## Banco
 

@@ -12,7 +12,7 @@ Se quiser adicionar um nome, envie o código e o nome juntos:
 <b>✨ Jeitos mais rápidos</b>
 • Encaminhe a mensagem da loja que contém o rastreio.
 • Envie um print onde aparece o código.
-• Use <b>🏠 Hoje</b> para ver o que precisa da sua atenção.
+• Use <b>📦 Visão geral</b> para acompanhar tudo em um só lugar.
 
 <blockquote expandable><b>🚚 Principais transportadoras compatíveis</b>
 
@@ -46,8 +46,8 @@ Se quiser, adicione um nome depois do código:
 <b>📨 Mensagem ou print</b>
 Você também pode encaminhar a mensagem da loja ou enviar um print. O bot tenta localizar o código e pede sua confirmação antes de salvar.
 
-<b>🏠 Hoje</b>
-Mostra saídas para entrega, pacotes chegando perto, ocorrências, itens em trânsito e entregues no dia.
+<b>📦 Visão geral</b>
+Mostra somente o que importa no momento: encomendas em trânsito, na região de destino, com atenção necessária, saídas para entrega e entregas concluídas no dia.
 
 <blockquote expandable><b>🚚 Transportadoras</b>
 

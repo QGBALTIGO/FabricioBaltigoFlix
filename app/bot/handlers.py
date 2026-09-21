@@ -536,10 +536,10 @@ async def text_tracking(
         or ""
     ).strip()
 
-    if text == "🏠 Hoje":
-        from app.bot.smart import today_cmd
+    if text in {"📦 Visão geral", "🏠 Hoje"}:
+        from app.bot.smart import overview_cmd
 
-        await today_cmd(
+        await overview_cmd(
             update,
             context,
         )
