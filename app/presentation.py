@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app.models import Shipment, Subscription, TrackingEvent
+from app.services.insights import action_advice
 from app.status import status_label
 from app.utils import (
     parse_datetime,
@@ -347,6 +348,14 @@ def format_tracking_card(
         headline = f"{ctx['display_time']} | {headline}"
     lines.append(f"<b>{headline}</b>")
     lines.extend(["", html.escape(ctx["detail"])])
+    action_title, _ = action_advice(
+        event.status if event else shipment.status
+    )
+    lines.extend([
+        "",
+        "💡 <b>Agora:</b> "
+        + html.escape(action_title),
+    ])
 
     if ctx["origin"] and ctx["destination"]:
         lines.extend([
@@ -407,6 +416,14 @@ def format_tracking_rich_html(
         headline = f"{ctx['display_time']} | {headline}"
     rows.append(f"<tr><td><b>{headline}</b></td></tr>")
     rows.append(f"<tr><td>{html.escape(ctx['detail'])}</td></tr>")
+    action_title, _ = action_advice(
+        event.status if event else shipment.status
+    )
+    rows.append(
+        "<tr><td>💡 <b>Agora:</b> "
+        + html.escape(action_title)
+        + "</td></tr>"
+    )
 
     if ctx["origin"] and ctx["destination"]:
         rows.append(
@@ -499,6 +516,9 @@ def format_tracking_notification_rich_html(
         "</aside>"
     )
 
+    action_title, _ = action_advice(
+        event.status
+    )
     rows = [
         (
             "<tr><td>"
@@ -509,6 +529,11 @@ def format_tracking_notification_rich_html(
         (
             "<tr><td>"
             f"{html.escape(description)}"
+            "</td></tr>"
+        ),
+        (
+            "<tr><td>💡 <b>Agora:</b> "
+            f"{html.escape(action_title)}"
             "</td></tr>"
         ),
     ]
@@ -589,6 +614,9 @@ def format_tracking_notification_fallback(
         or "Movimentação registrada."
     )
 
+    action_title, _ = action_advice(
+        event.status
+    )
     lines = [
         "🔔 <b>Nova atualização</b>",
         f"🔎 <code>{html.escape(shipment.tracking_number)}</code>",
@@ -598,6 +626,9 @@ def format_tracking_notification_fallback(
         f"<i>{html.escape(display_time)}</i>",
         "",
         html.escape(description),
+        "",
+        "💡 <b>Agora:</b> "
+        + html.escape(action_title),
     ]
 
     if origin and destination:
