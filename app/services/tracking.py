@@ -33,6 +33,13 @@ from app.providers.rastreador_pacotes import RastreadorPacotesProvider
 from app.providers.seventeen_track import SeventeenTrackProvider
 from app.providers.ship24 import Ship24Provider
 from app.providers.total_express_direct import TotalExpressDirectProvider
+from app.services.archive import (
+    archive_cutoff,
+    delivered_reference_sql,
+)
+from app.services.telemetry import (
+    record_operational_event,
+)
 from app.status import normalize_status
 from app.utils import event_hash, normalize_tracking_number
 
@@ -167,9 +174,17 @@ class TrackingService:
         user_id: int,
     ) -> None:
         active_count = await session.scalar(
-            select(func.count(Subscription.id)).where(
+            select(
+                func.count(Subscription.id)
+            )
+            .join(
+                Shipment,
+                Shipment.id == Subscription.shipment_id,
+            )
+            .where(
                 Subscription.user_id == user_id,
                 Subscription.is_active.is_(True),
+                Shipment.status != "delivered",
             )
         )
         if (active_count or 0) >= self.settings.max_active_shipments_per_user:
@@ -672,10 +687,27 @@ class TrackingService:
                 .provider_query_timeout_seconds
             ),
         )
+        loop = asyncio.get_running_loop()
 
         async def fetch_candidate(
             provider: Any,
         ):
+            started = loop.time()
+
+            def elapsed_ms() -> int:
+                return max(
+                    0,
+                    int(
+                        round(
+                            (
+                                loop.time()
+                                - started
+                            )
+                            * 1000
+                        )
+                    ),
+                )
+
             try:
                 semaphore = (
                     self._provider_semaphores
@@ -705,6 +737,7 @@ class TrackingService:
                     data,
                     None,
                     False,
+                    elapsed_ms(),
                 )
             except ProviderNotFound as exc:
                 return (
@@ -712,6 +745,7 @@ class TrackingService:
                     None,
                     exc,
                     True,
+                    elapsed_ms(),
                 )
             except asyncio.TimeoutError:
                 return (
@@ -721,6 +755,7 @@ class TrackingService:
                         "Tempo limite excedido na consulta."
                     ),
                     False,
+                    elapsed_ms(),
                 )
             except ProviderUnavailable as exc:
                 return (
@@ -728,6 +763,7 @@ class TrackingService:
                     None,
                     exc,
                     False,
+                    elapsed_ms(),
                 )
             except Exception as exc:
                 return (
@@ -735,6 +771,7 @@ class TrackingService:
                     None,
                     exc,
                     False,
+                    elapsed_ms(),
                 )
 
         results = await asyncio.gather(
@@ -756,10 +793,44 @@ class TrackingService:
             data,
             error,
             healthy_not_found,
+            duration_ms,
         ) in results:
             row = health_by_name[
                 provider.name
             ]
+            healthy = (
+                data is not None
+                or healthy_not_found
+            )
+            await record_operational_event(
+                session,
+                kind="provider_query",
+                name=provider.name,
+                ok=healthy,
+                duration_ms=duration_ms,
+                detail=(
+                    "not_found"
+                    if healthy_not_found
+                    else (
+                        type(error).__name__
+                        if error is not None
+                        else None
+                    )
+                ),
+                context_name=(
+                    getattr(
+                        shipment,
+                        "carrier_name",
+                        None,
+                    )
+                    or getattr(
+                        shipment,
+                        "carrier_code",
+                        None,
+                    )
+                    or "Em detecção"
+                ),
+            )
 
             if data is not None:
                 self._mark_provider_success(
@@ -805,8 +876,42 @@ class TrackingService:
                     data,
                     error,
                     healthy_not_found,
+                    duration_ms,
                 ) = await fetch_candidate(
                     fallback_provider
+                )
+
+                await record_operational_event(
+                    session,
+                    kind="provider_query",
+                    name=provider.name,
+                    ok=(
+                        data is not None
+                        or healthy_not_found
+                    ),
+                    duration_ms=duration_ms,
+                    detail=(
+                        "not_found"
+                        if healthy_not_found
+                        else (
+                            type(error).__name__
+                            if error is not None
+                            else None
+                        )
+                    ),
+                    context_name=(
+                        getattr(
+                            shipment,
+                            "carrier_name",
+                            None,
+                        )
+                        or getattr(
+                            shipment,
+                            "carrier_code",
+                            None,
+                        )
+                        or "Em detecção"
+                    ),
                 )
 
                 if data is not None:
@@ -1438,6 +1543,7 @@ class TrackingService:
         user_id: int,
         *,
         delivered: bool | None = False,
+        archived: bool | None = None,
         status: str | None = None,
         carrier: str | None = None,
         query: str | None = None,
@@ -1452,6 +1558,17 @@ class TrackingService:
 
         if delivered is True:
             conditions.append(Shipment.status == "delivered")
+
+            if archived is not None:
+                cutoff = archive_cutoff(
+                    self.settings.delivered_archive_after_days
+                )
+                reference = delivered_reference_sql()
+                conditions.append(
+                    reference < cutoff
+                    if archived
+                    else reference >= cutoff
+                )
         elif delivered is False:
             conditions.append(Shipment.status != "delivered")
 

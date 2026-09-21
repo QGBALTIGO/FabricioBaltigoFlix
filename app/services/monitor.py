@@ -35,6 +35,10 @@ from app.services.notifier import (
     notify_new_events,
     send_due_deferred_notifications,
 )
+from app.services.telemetry import (
+    prune_operational_events,
+    record_operational_event,
+)
 from app.services.tracking import (
     TrackingService,
 )
@@ -185,6 +189,23 @@ async def _send_stale_alerts(
                 "consulte a transportadora ou a loja pelos canais oficiais."
             )
 
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+
+            def elapsed_ms() -> int:
+                return max(
+                    0,
+                    int(
+                        round(
+                            (
+                                loop.time()
+                                - started
+                            )
+                            * 1000
+                        )
+                    ),
+                )
+
             try:
                 await bot.send_message(
                     chat_id=(
@@ -192,6 +213,13 @@ async def _send_stale_alerts(
                     ),
                     text=text,
                     parse_mode="HTML",
+                )
+                await record_operational_event(
+                    session,
+                    kind="notification",
+                    name="telegram_stale",
+                    ok=True,
+                    duration_ms=elapsed_ms(),
                 )
                 pending_logs.append(
                     NotificationLog(
@@ -202,10 +230,26 @@ async def _send_stale_alerts(
                 )
                 sent += 1
             except Forbidden:
+                await record_operational_event(
+                    session,
+                    kind="notification",
+                    name="telegram_stale",
+                    ok=False,
+                    duration_ms=elapsed_ms(),
+                    detail="forbidden",
+                )
                 sub.notifications_enabled = (
                     False
                 )
-            except TelegramError:
+            except TelegramError as exc:
+                await record_operational_event(
+                    session,
+                    kind="notification",
+                    name="telegram_stale",
+                    ok=False,
+                    duration_ms=elapsed_ms(),
+                    detail=type(exc).__name__,
+                )
                 log.exception(
                     "Falha ao enviar alerta de rastreio parado"
                 )
@@ -449,6 +493,41 @@ async def _deferred_loop(
         await asyncio.sleep(60)
 
 
+async def _telemetry_cleanup_loop(
+    settings: Settings,
+) -> None:
+    await asyncio.sleep(90)
+
+    while True:
+        try:
+            async with SessionLocal() as session:
+                deleted = await prune_operational_events(
+                    session,
+                    retention_days=(
+                        settings.telemetry_retention_days
+                    ),
+                )
+            if deleted:
+                log.info(
+                    "Telemetria antiga removida: %s evento(s).",
+                    deleted,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception(
+                "Falha ao limpar telemetria operacional"
+            )
+
+        await asyncio.sleep(
+            max(
+                1,
+                settings.telemetry_cleanup_hours,
+            )
+            * 3600
+        )
+
+
 async def _run_monitor_tasks(
     bot: Bot,
     tracking_service: TrackingService,
@@ -458,7 +537,13 @@ async def _run_monitor_tasks(
         asyncio.create_task(
             _deferred_loop(bot),
             name="deferred-notifications",
-        )
+        ),
+        asyncio.create_task(
+            _telemetry_cleanup_loop(
+                settings
+            ),
+            name="telemetry-cleanup",
+        ),
     ]
 
     if settings.tracking_poller_enabled:

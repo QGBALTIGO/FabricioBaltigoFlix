@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     provider_concurrency_per_source: int = 12
     manual_refresh_min_seconds: int = 60
 
+    image_barcode_scan_enabled: bool = True
+    image_barcode_timeout_seconds: float = 8.0
     image_ocr_enabled: bool = True
     image_ocr_max_bytes: int = 8 * 1024 * 1024
     image_ocr_cooldown_seconds: float = 15.0
@@ -66,6 +68,7 @@ class Settings(BaseSettings):
     image_ocr_concurrency: int = 1
 
     list_page_size: int = 10
+    delivered_archive_after_days: int = 7
     stale_after_hours: int = 72
     stale_monitor_enabled: bool = True
     stale_check_interval_minutes: int = 60
@@ -88,6 +91,9 @@ class Settings(BaseSettings):
     notification_batch_pause_seconds: float = 1.0
     broadcast_batch_size: int = 25
     broadcast_batch_pause_seconds: float = 1.0
+
+    telemetry_retention_days: int = 7
+    telemetry_cleanup_hours: int = 6
 
     support_url: str = ""
 

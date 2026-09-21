@@ -36,7 +36,11 @@ jobs:
       - run: python -m compileall -q app
       - run: python -m pytest -q
 
-      - name: Validate OCR inside production-like slim container
+      - name: Validate image scanner inside production-like slim container
         run: |
-          docker build -t melhor-rastreio-ocr-smoke .
-          docker run --rm melhor-rastreio-ocr-smoke             python -m pytest -q             tests/test_ocr_integration.py             tests/test_smart_intake.py
+          docker build -t melhor-rastreio-image-smoke .
+          docker run --rm melhor-rastreio-image-smoke \
+            python -m pytest -q \
+            tests/test_ocr_integration.py \
+            tests/test_smart_intake.py \
+            tests/test_barcode_scanner.py

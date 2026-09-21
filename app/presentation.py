@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app.models import Shipment, Subscription, TrackingEvent
-from app.services.insights import action_advice
 from app.status import status_label
 from app.utils import (
+    humanize_age,
     parse_datetime,
     parse_datetime_assuming_timezone,
 )
@@ -21,32 +21,32 @@ MONTHS_PT = {
 }
 
 STATUS_HEADLINES = {
-    "unknown": "Aguardando informações do seu pacote.",
-    "info_received": "Seu pacote foi registrado.",
-    "picked_up": "Seu pacote foi recebido pela transportadora.",
-    "in_transit": "Seu pacote está em movimentação.",
-    "customs": "Seu pacote está em fiscalização.",
-    "arrived_destination": "Seu pacote chegou à região de destino.",
-    "out_for_delivery": "Seu pacote saiu para entrega.",
-    "available_for_pickup": "Seu pacote está disponível para retirada.",
+    "unknown": "Aguardando informações da sua encomenda.",
+    "info_received": "Sua encomenda foi registrada.",
+    "picked_up": "Sua encomenda foi recebida pela transportadora.",
+    "in_transit": "Sua encomenda está em movimentação.",
+    "customs": "Sua encomenda está em fiscalização.",
+    "arrived_destination": "Sua encomenda chegou à região de destino.",
+    "out_for_delivery": "Sua encomenda saiu para entrega.",
+    "available_for_pickup": "Sua encomenda está disponível para retirada.",
     "delivery_failed": "A entrega não pôde ser concluída.",
     "exception": "Há uma ocorrência no transporte.",
-    "returned": "Seu pacote está em devolução.",
-    "delivered": "Seu pacote foi entregue.",
+    "returned": "Sua encomenda está em devolução.",
+    "delivered": "Sua encomenda foi entregue.",
 }
 
 STATUS_DETAILS = {
     "unknown": "Ainda não há movimentações suficientes para detalhar o trajeto.",
-    "info_received": "Os dados do envio foram recebidos e o pacote aguarda a próxima movimentação.",
+    "info_received": "Os dados do envio foram recebidos e a encomenda aguarda a próxima movimentação.",
     "picked_up": "A encomenda entrou na operação da transportadora e seguirá para o próximo centro logístico.",
-    "in_transit": "O pacote está transitando entre a agência e o centro de distribuição mais próximo.",
+    "in_transit": "A encomenda está em trânsito entre unidades da transportadora.",
     "customs": "A encomenda está em análise fiscal ou aduaneira antes de seguir viagem.",
-    "arrived_destination": "O pacote chegou à região de destino e deve seguir para a etapa local de entrega.",
-    "out_for_delivery": "O pacote está com a equipe responsável pela entrega ao destinatário.",
-    "available_for_pickup": "O pacote está aguardando retirada no ponto ou unidade indicada pela transportadora.",
+    "arrived_destination": "A encomenda chegou à região de destino e deve seguir para a etapa local de entrega.",
+    "out_for_delivery": "A encomenda está com a equipe responsável pela entrega ao destinatário.",
+    "available_for_pickup": "A encomenda está aguardando retirada no ponto ou unidade indicada pela transportadora.",
     "delivery_failed": "Houve uma tentativa de entrega sem conclusão. Uma nova tentativa ou retirada pode ser necessária.",
     "exception": "A transportadora registrou uma ocorrência que pode alterar o andamento normal da entrega.",
-    "returned": "O pacote entrou no fluxo de devolução ao remetente.",
+    "returned": "A encomenda entrou no fluxo de devolução ao remetente.",
     "delivered": "A transportadora registrou a entrega como concluída.",
 }
 
@@ -288,38 +288,98 @@ def extract_tracking_metadata(
     )
 
 
-def _card_context(subscription, shipment, timezone_name, event):
-    status = event.status if event else shipment.status
-    event_at = event.event_at if event else shipment.last_event_at
-    location = event.location if event else shipment.last_location
+def _card_context(
+    subscription,
+    shipment,
+    timezone_name,
+    event,
+):
+    status = (
+        event.status
+        if event
+        else shipment.status
+    )
+    event_at = (
+        event.event_at
+        if event
+        else shipment.last_event_at
+    )
+    location = (
+        event.location
+        if event
+        else shipment.last_location
+    )
 
-    origin, destination, eta, source_time = extract_tracking_metadata(
-        shipment,
-        event_at,
+    origin, destination, eta, source_time = (
+        extract_tracking_metadata(
+            shipment,
+            event_at,
+        )
     )
 
     display_time = source_time
     if not display_time and event_at:
-        display_time = _short_datetime(event_at, timezone_name)
+        display_time = _short_datetime(
+            event_at,
+            timezone_name,
+        )
+
+    description = None
+    if event:
+        description = getattr(
+            event,
+            "description",
+            None,
+        )
+    if not description:
+        description = getattr(
+            shipment,
+            "last_description",
+            None,
+        )
+    description = (
+        _clean_route(
+            description
+        )
+        or STATUS_DETAILS.get(
+            status,
+            STATUS_DETAILS["unknown"],
+        )
+    )
+
+    updated_age = (
+        humanize_age(
+            event_at
+        )
+        if event_at
+        else None
+    )
 
     return {
         "name": html.escape(
             subscription.nickname
-            or shipment.carrier_name
             or "Minha encomenda"
         ),
-        "number": html.escape(shipment.tracking_number),
+        "number": html.escape(
+            shipment.tracking_number
+        ),
         "carrier": html.escape(
             shipment.carrier_name
-            or "Transportadora em detecção"
+            or "Identificando transportadora"
         ),
-        "title": STATUS_HEADLINES.get(status, STATUS_HEADLINES["unknown"]),
-        "detail": STATUS_DETAILS.get(status, STATUS_DETAILS["unknown"]),
+        "status": html.escape(
+            status_label(
+                status
+            )
+        ),
+        "status_code": status,
+        "detail": description,
         "location": location,
         "origin": origin,
         "destination": destination,
         "eta": eta,
         "display_time": display_time,
+        "updated_age": updated_age,
     }
 
 
@@ -330,60 +390,105 @@ def format_tracking_card(
     *,
     event: TrackingEvent | None = None,
 ) -> str:
-    ctx = _card_context(subscription, shipment, timezone_name, event)
+    ctx = _card_context(
+        subscription,
+        shipment,
+        timezone_name,
+        event,
+    )
+
     lines = [
         (
             "<blockquote>"
-            f"🔎 <code>{ctx['number']}</code>\n"
-            f"<i>{ctx['name']}</i>"
+            f"<b>📦 {ctx['name']}</b>\n"
+            f"<code>{ctx['number']}</code>\n"
+            f"🚚 <i>{ctx['carrier']}</i>"
             "</blockquote>"
         ),
         "",
-        f"📦 <b>Transportadora:</b> {ctx['carrier']}",
-        "",
+        f"<b>{ctx['status']}</b>",
     ]
 
-    headline = html.escape(ctx["title"])
+    update_parts: list[str] = []
     if ctx["display_time"]:
-        headline = f"{ctx['display_time']} | {headline}"
-    lines.append(f"<b>{headline}</b>")
-    lines.extend(["", html.escape(ctx["detail"])])
-    action_title, _ = action_advice(
-        event.status if event else shipment.status
-    )
-    lines.extend([
-        "",
-        "💡 <b>Agora:</b> "
-        + html.escape(action_title),
-    ])
+        update_parts.append(
+            f"<i>{html.escape(ctx['display_time'])}</i>"
+        )
+    if ctx["detail"]:
+        update_parts.append(
+            html.escape(
+                ctx["detail"]
+            )
+        )
+    if update_parts:
+        lines.extend(
+            [
+                "",
+                "🕐 <b>Última atualização</b>",
+                *update_parts,
+            ]
+        )
 
-    if ctx["origin"] and ctx["destination"]:
-        lines.extend([
-            "",
-            (
-                "📍 <b>"
-                f"{html.escape(ctx['origin'])}"
-                " → "
-                f"{html.escape(ctx['destination'])}"
-                "</b>"
-            ),
-        ])
+    if (
+        ctx["origin"]
+        and ctx["destination"]
+    ):
+        lines.extend(
+            [
+                "",
+                (
+                    "📍 <b>Rota atual</b>\n"
+                    f"{html.escape(ctx['origin'])}"
+                    " → "
+                    f"{html.escape(ctx['destination'])}"
+                ),
+            ]
+        )
     elif ctx["location"]:
-        lines.extend([
-            "",
-            f"📍 <b>{html.escape(str(ctx['location']))}</b>",
-        ])
+        lines.extend(
+            [
+                "",
+                "📍 <b>Local atual</b>\n"
+                + html.escape(
+                    str(
+                        ctx["location"]
+                    )
+                ),
+            ]
+        )
 
-    if ctx["eta"]:
-        lines.extend([
-            "",
-            (
-                "📅 <b>Previsão de entrega:</b> "
-                f"<i>{html.escape(ctx['eta'])}</i>"
-            ),
-        ])
+    if (
+        ctx["eta"]
+        and ctx["status_code"]
+        != "delivered"
+    ):
+        lines.extend(
+            [
+                "",
+                (
+                    "📅 <b>Previsão de entrega</b>\n"
+                    f"{html.escape(ctx['eta'])}"
+                ),
+            ]
+        )
 
-    return "\n".join(lines)
+    if ctx["updated_age"]:
+        lines.extend(
+            [
+                "",
+                (
+                    "🕒 <i>Atualizado "
+                    + html.escape(
+                        ctx["updated_age"]
+                    )
+                    + "</i>"
+                ),
+            ]
+        )
+
+    return "\n".join(
+        lines
+    )
 
 
 def format_tracking_rich_html(
@@ -394,59 +499,98 @@ def format_tracking_rich_html(
     event: TrackingEvent | None = None,
     warning: str | None = None,
 ) -> str:
-    ctx = _card_context(subscription, shipment, timezone_name, event)
+    ctx = _card_context(
+        subscription,
+        shipment,
+        timezone_name,
+        event,
+    )
 
     top = (
         "<aside>"
-        f"🔎 <code>{ctx['number']}</code><br>"
-        f"<i>{ctx['name']}</i>"
+        f"<b>📦 {ctx['name']}</b><br>"
+        f"<code>{ctx['number']}</code><br>"
+        f"🚚 <i>{ctx['carrier']}</i>"
         "</aside>"
     )
 
     rows = [
         (
             "<tr><td>"
-            f"📦 <b>Transportadora:</b> {ctx['carrier']}"
+            f"<b>{ctx['status']}</b>"
             "</td></tr>"
         )
     ]
 
-    headline = html.escape(ctx["title"])
+    update_bits: list[str] = [
+        "🕐 <b>Última atualização</b>"
+    ]
     if ctx["display_time"]:
-        headline = f"{ctx['display_time']} | {headline}"
-    rows.append(f"<tr><td><b>{headline}</b></td></tr>")
-    rows.append(f"<tr><td>{html.escape(ctx['detail'])}</td></tr>")
-    action_title, _ = action_advice(
-        event.status if event else shipment.status
-    )
+        update_bits.append(
+            "<i>"
+            + html.escape(
+                ctx["display_time"]
+            )
+            + "</i>"
+        )
+    if ctx["detail"]:
+        update_bits.append(
+            html.escape(
+                ctx["detail"]
+            )
+        )
     rows.append(
-        "<tr><td>💡 <b>Agora:</b> "
-        + html.escape(action_title)
+        "<tr><td>"
+        + "<br>".join(
+            update_bits
+        )
         + "</td></tr>"
     )
 
-    if ctx["origin"] and ctx["destination"]:
+    if (
+        ctx["origin"]
+        and ctx["destination"]
+    ):
         rows.append(
             "<tr><td>"
-            "📍 "
-            f"<b>{html.escape(ctx['origin'])}</b>"
+            "📍 <b>Rota atual</b><br>"
+            f"{html.escape(ctx['origin'])}"
             " → "
-            f"<b>{html.escape(ctx['destination'])}</b>"
+            f"{html.escape(ctx['destination'])}"
             "</td></tr>"
         )
     elif ctx["location"]:
         rows.append(
             "<tr><td>"
-            "📍 "
-            f"<b>{html.escape(str(ctx['location']))}</b>"
+            "📍 <b>Local atual</b><br>"
+            + html.escape(
+                str(
+                    ctx["location"]
+                )
+            )
+            + "</td></tr>"
+        )
+
+    if (
+        ctx["eta"]
+        and ctx["status_code"]
+        != "delivered"
+    ):
+        rows.append(
+            "<tr><td>"
+            "📅 <b>Previsão de entrega</b><br>"
+            f"{html.escape(ctx['eta'])}"
             "</td></tr>"
         )
 
-    if ctx["eta"]:
+    if ctx["updated_age"]:
         rows.append(
             "<tr><td>"
-            "📅 <b>Previsão de entrega:</b> "
-            f"<i>{html.escape(ctx['eta'])}</i>"
+            "🕒 <i>Atualizado "
+            + html.escape(
+                ctx["updated_age"]
+            )
+            + "</i>"
             "</td></tr>"
         )
 
@@ -457,7 +601,12 @@ def format_tracking_rich_html(
             "</td></tr>"
         )
 
-    return top + "<table bordered>" + "".join(rows) + "</table>"
+    return (
+        top
+        + "<table bordered>"
+        + "".join(rows)
+        + "</table>"
+    )
 
 
 
@@ -518,9 +667,6 @@ def format_tracking_notification_rich_html(
         "</aside>"
     )
 
-    action_title, _ = action_advice(
-        event.status
-    )
     rows = [
         (
             "<tr><td>"
@@ -531,11 +677,6 @@ def format_tracking_notification_rich_html(
         (
             "<tr><td>"
             f"{html.escape(description)}"
-            "</td></tr>"
-        ),
-        (
-            "<tr><td>💡 <b>Agora:</b> "
-            f"{html.escape(action_title)}"
             "</td></tr>"
         ),
     ]
@@ -627,9 +768,6 @@ def format_tracking_notification_fallback(
         or "Movimentação registrada."
     )
 
-    action_title, _ = action_advice(
-        event.status
-    )
     lines = [
         "🔔 <b>Nova atualização</b>",
         f"🔎 <code>{html.escape(shipment.tracking_number)}</code>",
@@ -639,9 +777,6 @@ def format_tracking_notification_fallback(
         f"<i>{html.escape(display_time)}</i>",
         "",
         html.escape(description),
-        "",
-        "💡 <b>Agora:</b> "
-        + html.escape(action_title),
     ]
 
     if new_events_count > 1:

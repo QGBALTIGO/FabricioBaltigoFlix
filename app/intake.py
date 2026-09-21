@@ -212,6 +212,247 @@ def extract_tracking_candidates(
     ]
 
 
+def _barcode_format_key(value: Any) -> str:
+    return re.sub(
+        r"[^a-z0-9]",
+        "",
+        str(value or "").lower(),
+    )
+
+
+def _barcode_direct_score(
+    format_key: str,
+    number: str,
+) -> float:
+    if CORREIOS_RE.fullmatch(number):
+        return 1.0
+
+    if "qrcode" in format_key:
+        return 0.99
+
+    if format_key in {
+        "code128",
+        "code39",
+        "code93",
+    }:
+        return 0.98
+
+    return 0.93
+
+
+def _barcode_allows_numeric(
+    format_key: str,
+) -> bool:
+    # EAN/UPC are usually product barcodes, not shipment identifiers.
+    return format_key in {
+        "code128",
+        "code39",
+        "code93",
+        "itf",
+        "codabar",
+    }
+
+
+def _barcode_tokens(text: str) -> list[str]:
+    if not text:
+        return []
+
+    values = [text]
+    values.extend(
+        item
+        for item in re.split(
+            r"[\s|;,/?#=&:]+",
+            text,
+        )
+        if item
+    )
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = value.strip(
+            " .,:;()[]{}<>"
+        )
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        out.append(cleaned)
+    return out
+
+
+def barcode_tracking_candidates_from_image_bytes(
+    image_bytes: bytes,
+    *,
+    limit: int = 5,
+) -> list[TrackingCandidate]:
+    """Decode QR/1D/2D labels before falling back to OCR."""
+
+    if not image_bytes:
+        return []
+
+    import cv2
+    import numpy as np
+    import zxingcpp
+
+    encoded = np.frombuffer(
+        image_bytes,
+        dtype=np.uint8,
+    )
+    image = cv2.imdecode(
+        encoded,
+        cv2.IMREAD_COLOR,
+    )
+    if image is None:
+        return []
+
+    height, width = image.shape[:2]
+    longest = max(
+        int(height),
+        int(width),
+    )
+    if longest > 3200:
+        scale = 3200.0 / longest
+        image = cv2.resize(
+            image,
+            (
+                max(
+                    1,
+                    int(width * scale),
+                ),
+                max(
+                    1,
+                    int(height * scale),
+                ),
+            ),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    barcodes = zxingcpp.read_barcodes(
+        image,
+        try_rotate=True,
+        try_downscale=True,
+        try_invert=True,
+    )
+
+    best: dict[
+        str,
+        TrackingCandidate,
+    ] = {}
+
+    for barcode in barcodes:
+        text = str(
+            getattr(
+                barcode,
+                "text",
+                "",
+            )
+            or ""
+        ).strip()
+        if not text:
+            continue
+
+        format_key = _barcode_format_key(
+            getattr(
+                barcode,
+                "format",
+                "",
+            )
+        )
+        source = (
+            "barcode:"
+            + (
+                format_key
+                or "unknown"
+            )
+        )
+
+        # QR payloads frequently contain URLs or descriptive text.
+        for candidate in extract_tracking_candidates(
+            text,
+            source=source,
+            limit=limit,
+        ):
+            current = best.get(
+                candidate.number
+            )
+            if (
+                current is None
+                or candidate.confidence
+                > current.confidence
+            ):
+                best[
+                    candidate.number
+                ] = candidate
+
+        allow_numeric = (
+            _barcode_allows_numeric(
+                format_key
+            )
+        )
+
+        for token in _barcode_tokens(
+            text
+        ):
+            number = _normalize_candidate(
+                token,
+                allow_numeric=allow_numeric,
+            )
+            if not number:
+                continue
+
+            # Numeric-only values from common retail symbologies are deliberately
+            # ignored to avoid treating an EAN/UPC product code as a shipment.
+            if (
+                number.isdigit()
+                and not allow_numeric
+            ):
+                continue
+
+            score = _barcode_direct_score(
+                format_key,
+                number,
+            )
+            candidate = TrackingCandidate(
+                number=number,
+                confidence=score,
+                source=source,
+            )
+            current = best.get(
+                number
+            )
+            if (
+                current is None
+                or score
+                > current.confidence
+            ):
+                best[number] = candidate
+
+    ordered = sorted(
+        best.values(),
+        key=lambda item: (
+            -item.confidence,
+            -len(item.number),
+            item.number,
+        ),
+    )
+    return ordered[
+        : max(
+            1,
+            int(limit),
+        )
+    ]
+
+
+def barcode_runtime_available() -> bool:
+    try:
+        import cv2  # noqa: F401
+        import numpy  # noqa: F401
+        import zxingcpp  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
 def _get_ocr_engine():
     global _ocr_engine
     if _ocr_engine is not None:

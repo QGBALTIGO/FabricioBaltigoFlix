@@ -1,8 +1,8 @@
 # Melhor Rastreio 📦
 
-Bot de rastreamento para Telegram, com FastAPI, PostgreSQL, notificações automáticas e múltiplas fontes de rastreio.
+Bot de rastreamento para Telegram com FastAPI, PostgreSQL, notificações automáticas, scanner de etiquetas e múltiplas fontes de rastreio.
 
-O projeto usa uma arquitetura híbrida para não depender de uma API paga.
+A arquitetura é híbrida: combina fontes públicas/diretas, fallbacks e health persistente para reduzir dependência de um único serviço.
 
 ## Motor de rastreamento
 
@@ -10,11 +10,11 @@ Ordem principal:
 
 1. Melhor Rastreio GraphQL, usando a operação pública `searchParcel`.
 2. Correios direto, quando o código tem formato postal brasileiro.
-3. Jadlog direto pela página pública.
-4. Total Express direto pelo endpoint público do rastreador.
-5. 17TRACK e Ship24 apenas se forem configurados manualmente como fallbacks opcionais.
+3. Jadlog direto.
+4. Total Express direto.
+5. 17TRACK e Ship24 somente quando configurados como fallbacks opcionais.
 
-Atualmente o catálogo cobre diretamente ou pelo Melhor Rastreio:
+O catálogo cobre diretamente ou pelo Melhor Rastreio, entre outras:
 
 - Correios
 - Jadlog
@@ -27,11 +27,9 @@ Atualmente o catálogo cobre diretamente ou pelo Melhor Rastreio:
 - Melhor Envio
 - Total Express
 
-A arquitetura permite adicionar novos adapters sem alterar o restante do bot.
+## Health, quarentena e polling
 
-## Health e quarentena
-
-Cada fonte possui health persistente em PostgreSQL.
+Cada fonte possui health persistente no PostgreSQL.
 
 Erros reais de rede, HTTP ou parser aumentam o contador de falhas:
 
@@ -39,60 +37,64 @@ Erros reais de rede, HTTP ou parser aumentam o contador de falhas:
 - 6 falhas consecutivas: pausa por 6 horas
 - 12 falhas consecutivas: pausa por 24 horas
 
-Um código simplesmente "não encontrado" NÃO conta como falha da fonte. Nesse caso o roteador tenta o próximo provider.
+Um código simplesmente não encontrado não é tratado como falha técnica da fonte.
 
-Uma resposta válida zera o contador de falhas.
-
-## Polling inteligente
-
-O mesmo código é consultado uma única vez, mesmo se vários usuários o acompanham.
-
-Cadência padrão:
+Cadência padrão de polling:
 
 - sem eventos / pré-postagem: 60 min
 - coletado / em trânsito: 30 min
-- chegou ao destino: 15 min
+- chegou à região de destino: 15 min
 - saiu para entrega: 5 min
-- alfândega / falha / exceção / retirada: 30 min
+- fiscalização / falha / exceção / retirada: 30 min
 - entregue: encerra consultas
 
-O worker acorda a cada 5 minutos e consulta apenas os pacotes cujo `next_check_at` venceu.
+O mesmo código é consultado uma única vez mesmo quando vários usuários o acompanham.
 
 ## Telegram
 
 Comandos principais:
 
-- /rastrear CODIGO
-- /meus
-- /resumo
-- /entregues
-- /buscar TERMO
-- /filtros
-- /relatorio
-- /transportadoras
-- /config
-- /seguranca
-- /status
-- /privacidade
-- /ajuda
+- `/rastrear CODIGO`
+- `/meus`
+- `/resumo`
+- `/entregues`
+- `/arquivo`
+- `/relatorio`
+- `/config`
+- `/privacidade`
+- `/ajuda`
 
-Também é possível simplesmente enviar o código no chat.
+Administração:
 
-### Caixa de entrada inteligente
+- `/admin`
+- `/saude`
+
+Também é possível enviar o código diretamente no chat.
+
+### Entrada inteligente
 
 Além do código puro, o bot pode:
 
-- detectar códigos dentro de mensagens de lojas/transportadoras;
-- receber mensagens encaminhadas e sugerir o rastreio encontrado;
-- ler prints localmente por OCR, sem enviar a imagem para um serviço de IA/OCR externo;
+- detectar códigos em mensagens de lojas e transportadoras;
+- receber mensagens encaminhadas;
+- analisar fotos de etiquetas e capturas de tela;
 - detectar, quando presentes, loja, número do pedido e nome do produto;
-- pedir confirmação antes de cadastrar qualquer código detectado automaticamente.
+- pedir confirmação antes de salvar qualquer código detectado automaticamente.
+
+### Scanner híbrido de etiquetas
+
+O fluxo de imagem é:
+
+1. QR Code / código de barras com ZXing C++;
+2. validação do conteúdo como possível rastreio;
+3. OCR local com RapidOCR + ONNX Runtime somente quando necessário;
+4. confirmação do usuário antes de cadastrar.
+
+EAN/UPC numérico de produto não é aceito automaticamente como rastreio. O scanner limita resolução e possui timeout/cooldown para proteger CPU e memória.
 
 ### Visão geral
 
-O botão **📦 Visão geral** resume o estado atual dos pacotes sem exibir categorias zeradas.
-
-Ele destaca apenas o que existe no momento:
+**📦 Visão geral** mostra somente categorias que realmente possuem encomendas no momento:
 
 - saiu para entrega;
 - chegou à região de destino;
@@ -100,23 +102,61 @@ Ele destaca apenas o que existe no momento:
 - está em trânsito;
 - foi entregue no dia.
 
-Quando há histórico suficiente da mesma transportadora, a visão geral também pode mostrar uma janela estimada usando entregas anteriores, sem inventar datas quando não há amostra suficiente.
+Quando há histórico suficiente da mesma transportadora, pode mostrar uma janela estimada baseada em entregas anteriores. Sem amostra suficiente, nenhuma previsão artificial é inventada.
 
-### Alertas avançados
+### Cartão de rastreio
 
-Cada pacote possui um único botão **🔔 Alertas**. Dentro dele, o usuário pode:
+O cartão principal segue uma hierarquia única:
 
-- ativar ou desativar todos os alertas;
+1. nome da encomenda;
+2. status;
+3. última movimentação real;
+4. rota/local atual;
+5. previsão de entrega, quando existente;
+6. tempo desde a última atualização.
+
+As ações ficam reduzidas a:
+
+- Histórico
+- Alertas
+- Compartilhar rastreio
+
+### Alertas
+
+Cada encomenda possui um único botão **🔔 Alertas**. Nele o usuário pode:
+
+- ligar ou desligar todos os alertas;
 - escolher movimentações intermediárias;
 - escolher saída para entrega;
 - escolher problemas, fiscalização e retirada;
 - escolher entrega concluída.
 
-Não há horários silenciosos: as notificações habilitadas são enviadas assim que a movimentação é processada.
+Não existem horários silenciosos.
 
-### Orientação de status
+### Arquivamento inteligente
 
-Cada cartão pode mostrar uma orientação curta em **💡 Agora**, integrada ao próprio rastreio, sem criar um botão ou tela extra.
+Entregas concluídas permanecem em **Entregues recentes** pelo período configurado em `DELIVERED_ARCHIVE_AFTER_DAYS` (padrão: 7 dias).
+
+Depois disso aparecem automaticamente em **🗃 Arquivo**. A classificação é calculada pela data real de entrega, portanto não depende de cron/job e continua correta após reinícios ou deploys.
+
+Entregas concluídas não consomem o limite de rastreios ativos.
+
+### Saúde administrativa
+
+O painel `/admin` / `/saude` mostra, entre outros:
+
+- pacotes e acompanhamentos ativos;
+- backlog do polling;
+- consultas por hora;
+- latência e falhas por fonte;
+- latência por transportadora;
+- fonte mais rápida;
+- fontes em quarentena;
+- sucesso/falha de notificações;
+- taxa de sucesso de QR/código de barras e OCR;
+- erros técnicos recentes.
+
+A telemetria operacional não guarda código de rastreio, usuário, endereço ou conteúdo da encomenda. Ela possui retenção curta, configurável, com padrão de 7 dias.
 
 ## Banco
 
@@ -129,54 +169,53 @@ Tabelas principais:
 - notification_logs
 - provider_health
 - polling_states
-- user_preferences
 - subscription_preferences
-- deferred_notifications
+- operational_events
 
-`provider_health` guarda a saúde das fontes.
-`polling_states` controla quando cada encomenda deve ser consultada novamente.
-`subscription_preferences` guarda alertas e metadados opcionais por encomenda.
-`user_preferences` e `deferred_notifications` permanecem apenas para compatibilidade e drenagem de dados criados pela antiga função de horário silencioso.
-
-## Melhor Rastreio GraphQL
-
-O provider principal usa:
-
-`https://api.melhorrastreio.com.br/graphql`
-
-com fallback para:
-
-`https://melhor-rastreio-api.melhorrastreio.com.br/graphql`
-
-Ele usa apenas a operação pública `searchParcel`. Funções GraphQL que exigem autenticação não são usadas.
-
-Importante: esse endpoint é um backend público do serviço Melhor Rastreio, e não uma API de terceiros com SLA garantido para nosso projeto. Por isso existem fallbacks, health-check e quarentena automática.
+Tabelas legadas `user_preferences` e `deferred_notifications` são mantidas apenas para compatibilidade/drenagem de versões antigas.
 
 ## Produção
 
-No Railway:
+No Railway, o Telegram roda via webhook e o PostgreSQL persiste usuários, encomendas, eventos, estado das fontes e telemetria operacional.
 
-```
+Configurações relevantes:
+
+```env
 MELHOR_RASTREIO_ENABLED=true
 DIRECT_FALLBACKS_ENABLED=true
 TRACKING_POLLER_ENABLED=true
 MONITOR_TICK_MINUTES=5
+DELIVERED_ARCHIVE_AFTER_DAYS=7
+IMAGE_BARCODE_SCAN_ENABLED=true
+IMAGE_OCR_ENABLED=true
+TELEMETRY_RETENTION_DAYS=7
 ```
 
-O Telegram roda via webhook e o PostgreSQL persiste usuários, pacotes, eventos e estado dos providers.
-
-## Segurança
+## Segurança e privacidade
 
 - tokens ficam apenas em variáveis do Railway;
 - nenhuma chave é commitada;
-- webhook Telegram usa secret token;
+- webhook do Telegram usa secret token;
 - API própria usa bearer token;
 - links compartilháveis são assinados;
-- logs do httpx/httpcore são silenciados para não expor token do Telegram;
-- OCR de prints roda localmente e o arquivo temporário é removido após a leitura;
-- códigos detectados em texto ou imagem só são cadastrados depois da confirmação do usuário.
+- logs do httpx/httpcore são reduzidos para evitar exposição de token;
+- imagens são processadas localmente e não ficam armazenadas após a leitura;
+- códigos detectados em texto ou imagem só são cadastrados depois da confirmação do usuário;
+- telemetria operacional não contém identificadores de usuário ou encomenda.
 
 ## Testes
+
+O CI executa:
+
+- instalação das dependências;
+- OpenCV headless;
+- construtor real do RapidOCR;
+- `compileall`;
+- suíte completa do pytest;
+- build do container `python:3.12-slim`;
+- testes reais de OCR, QR Code e código de barras dentro do container de produção.
+
+Execução local:
 
 ```bash
 python -m compileall -q app

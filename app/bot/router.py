@@ -6,7 +6,7 @@ from telegram.ext import (
     filters,
 )
 
-from app.bot import handlers, smart
+from app.bot import admin_health, handlers, smart
 
 
 def register_handlers(app: Application) -> None:
@@ -19,15 +19,23 @@ def register_handlers(app: Application) -> None:
     # Alias antigo mantido apenas por compatibilidade.
     app.add_handler(CommandHandler("hoje", smart.overview_cmd))
     app.add_handler(CommandHandler("entregues", handlers.delivered))
+    app.add_handler(CommandHandler("arquivo", handlers.archive))
     app.add_handler(CommandHandler("relatorio", handlers.report_cmd))
     app.add_handler(CommandHandler("config", handlers.config_cmd))
     app.add_handler(
         CommandHandler("privacidade", handlers.privacy_cmd)
     )
     app.add_handler(CommandHandler("cancelar", handlers.cancel_cmd))
-    app.add_handler(CommandHandler("admin", handlers.admin))
+    app.add_handler(CommandHandler("admin", admin_health.admin_health))
+    app.add_handler(CommandHandler("saude", admin_health.admin_health))
     app.add_handler(
         CommandHandler("broadcast", handlers.broadcast)
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_health.admin_health_callback,
+            pattern=r"^adminhealth:",
+        )
     )
     app.add_handler(
         CallbackQueryHandler(

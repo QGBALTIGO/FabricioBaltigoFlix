@@ -30,6 +30,9 @@ from app.presentation import (
 from app.services.preferences import (
     custom_alert_allows,
 )
+from app.services.telemetry import (
+    record_operational_event,
+)
 from app.status import should_notify
 
 settings = get_settings()
@@ -183,9 +186,31 @@ async def notify_new_events(
     # Libera a conexão antes do fanout para o Telegram.
     await session.commit()
 
+    loop = asyncio.get_running_loop()
+
     async def send_one(
         sub: Subscription,
-    ) -> bool:
+    ) -> tuple[
+        bool,
+        int,
+        str | None,
+    ]:
+        started = loop.time()
+
+        def elapsed_ms() -> int:
+            return max(
+                0,
+                int(
+                    round(
+                        (
+                            loop.time()
+                            - started
+                        )
+                        * 1000
+                    )
+                ),
+            )
+
         try:
             await _send_event(
                 bot,
@@ -196,7 +221,11 @@ async def notify_new_events(
                     new_events_count
                 ),
             )
-            return True
+            return (
+                True,
+                elapsed_ms(),
+                None,
+            )
 
         except Forbidden:
             sub.notifications_enabled = (
@@ -206,14 +235,22 @@ async def notify_new_events(
                 "Usuário %s bloqueou o bot.",
                 sub.user.telegram_id,
             )
-            return False
+            return (
+                False,
+                elapsed_ms(),
+                "forbidden",
+            )
 
-        except TelegramError:
+        except TelegramError as exc:
             log.exception(
                 "Falha ao notificar %s",
                 sub.user.telegram_id,
             )
-            return False
+            return (
+                False,
+                elapsed_ms(),
+                type(exc).__name__,
+            )
 
     sent = 0
     batch_size = max(
@@ -236,11 +273,21 @@ async def notify_new_events(
                 for sub in batch
             )
         )
-        sent += sum(
-            1
-            for result in results
-            if result
-        )
+        for (
+            success,
+            duration_ms,
+            detail,
+        ) in results:
+            await record_operational_event(
+                session,
+                kind="notification",
+                name="telegram",
+                ok=success,
+                duration_ms=duration_ms,
+                detail=detail,
+            )
+            if success:
+                sent += 1
 
         if (
             offset + batch_size
@@ -365,6 +412,22 @@ async def send_due_deferred_notifications(
             )
             continue
 
+        started = asyncio.get_running_loop().time()
+
+        def elapsed_ms() -> int:
+            return max(
+                0,
+                int(
+                    round(
+                        (
+                            asyncio.get_running_loop().time()
+                            - started
+                        )
+                        * 1000
+                    )
+                ),
+            )
+
         try:
             await _send_event(
                 bot,
@@ -379,12 +442,27 @@ async def send_due_deferred_notifications(
                     or 1
                 ),
             )
+            await record_operational_event(
+                session,
+                kind="notification",
+                name="telegram_legacy",
+                ok=True,
+                duration_ms=elapsed_ms(),
+            )
             await session.delete(
                 deferred
             )
             sent += 1
 
         except Forbidden:
+            await record_operational_event(
+                session,
+                kind="notification",
+                name="telegram_legacy",
+                ok=False,
+                duration_ms=elapsed_ms(),
+                detail="forbidden",
+            )
             sub.notifications_enabled = (
                 False
             )
@@ -392,7 +470,15 @@ async def send_due_deferred_notifications(
                 deferred
             )
 
-        except TelegramError:
+        except TelegramError as exc:
+            await record_operational_event(
+                session,
+                kind="notification",
+                name="telegram_legacy",
+                ok=False,
+                duration_ms=elapsed_ms(),
+                detail=type(exc).__name__,
+            )
             log.exception(
                 "Falha ao entregar notificação adiada para %s",
                 user.telegram_id,
