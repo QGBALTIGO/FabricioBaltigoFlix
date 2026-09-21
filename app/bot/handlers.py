@@ -217,6 +217,25 @@ def _my_packages_text(total: int) -> str:
     )
 
 
+
+def _remove_packages_text(total: int) -> str:
+    if total == 1:
+        count = "Você tem <b>1 pacote salvo</b>."
+    else:
+        count = (
+            "Você tem "
+            f"<b>{total} pacotes salvos</b>."
+        )
+
+    return (
+        "🗑 <b>Remover pacote</b>\n\n"
+        "<blockquote>"
+        + count
+        + "</blockquote>\n\n"
+        "Toque no pacote que deseja remover da sua lista."
+    )
+
+
 def _add_package_help_text() -> str:
     return (
         "➕ <b>Adicionar nova encomenda</b>\n\n"
@@ -914,11 +933,7 @@ async def _show_list(
     )
 
     if mode == "remove":
-        text = (
-            f"{title}{suffix}\n\n"
-            f"{total} pacote(s) salvo(s). "
-            "Toque no pacote que deseja remover."
-        )
+        text = _remove_packages_text(total)
     else:
         if mode == "active":
             text = _my_packages_text(total)
