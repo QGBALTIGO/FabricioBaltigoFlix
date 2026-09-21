@@ -53,7 +53,9 @@ def test_rastreador_pacotes_parses_latest_correios_event():
     assert latest.description == (
         "Objeto em transferência - por favor aguarde"
     )
-    assert latest.location == "CURITIBA/PR"
+    assert latest.location == (
+        "Unidade de Tratamento - CURITIBA/PR"
+    )
 
 
 def test_rastreador_pacotes_extracts_full_route():
