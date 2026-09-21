@@ -25,7 +25,13 @@ class JadlogDirectProvider:
 
     @staticmethod
     def can_handle(number: str) -> bool:
-        return bool(re.fullmatch(r"\d{1,14}", re.sub(r"\D", "", number)))
+        raw = (number or "").strip()
+        if not raw or re.search(r"[A-Za-z]", raw):
+            return False
+        if not re.fullmatch(r"[\d.\-\s]+", raw):
+            return False
+        normalized = re.sub(r"\D", "", raw)
+        return bool(re.fullmatch(r"\d{1,14}", normalized))
 
     async def register(self, tracking_number: str) -> ProviderTracking:
         return await self.fetch(tracking_number)
