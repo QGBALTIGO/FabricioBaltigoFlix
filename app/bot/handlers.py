@@ -262,7 +262,7 @@ def _my_packages_text(total: int) -> str:
         "<blockquote>"
         + count
         + "</blockquote>\n\n"
-        "Toque em um pacote para ver o status, "
+        "Selecione uma encomenda para abrir o rastreio, "
         "histórico e alertas."
     )
 
@@ -270,19 +270,19 @@ def _my_packages_text(total: int) -> str:
 
 def _remove_packages_text(total: int) -> str:
     if total == 1:
-        count = "Você tem <b>1 pacote salvo</b>."
+        count = "Você tem <b>1 encomenda salva</b>."
     else:
         count = (
             "Você tem "
-            f"<b>{total} pacotes salvos</b>."
+            f"<b>{total} encomendas salvas</b>."
         )
 
     return (
-        "🗑 <b>Remover pacote</b>\n\n"
+        "🗑 <b>Remover encomenda</b>\n\n"
         "<blockquote>"
         + count
         + "</blockquote>\n\n"
-        "Toque no pacote que deseja remover da sua lista."
+        "Selecione a encomenda que deseja remover da sua lista."
     )
 
 
@@ -297,7 +297,7 @@ def _add_package_help_text() -> str:
         "<code>AB123456789BR Teclado gamer</code>\n\n"
         "<blockquote>"
         "O nome é opcional e serve apenas para "
-        "você identificar o pacote com mais facilidade."
+        "você identificar a encomenda com mais facilidade."
         "</blockquote>\n"
         "Depois de enviar, eu identifico a transportadora "
         "e começo a acompanhar a encomenda automaticamente. 🚚"
@@ -447,7 +447,7 @@ async def start(
                 if sub:
                     await (
                         update.effective_message.reply_text(
-                            "🔗 <b>Rastreio compartilhado adicionado aos seus pacotes.</b>",
+                            "🔗 <b>Rastreio compartilhado salvo em Meus pacotes.</b>",
                             parse_mode=ParseMode.HTML,
                         )
                     )
@@ -552,7 +552,7 @@ async def text_tracking(
         )
         return
 
-    if text == "🗑 Remover pacote":
+    if text in {"🗑 Remover", "🗑 Remover pacote"}:
         context.user_data["list_state"] = {
             "mode": "remove"
         }
@@ -729,10 +729,8 @@ async def add_tracking(
             "Erro ao cadastrar rastreio"
         )
         await msg.edit_text(
-            "❌ Não consegui consultar "
-            "esse código agora. "
-            "Tente novamente em alguns "
-            "minutos."
+            "❌ Não foi possível consultar esse código agora. "
+            "Tente novamente em instantes."
         )
         return False
 
@@ -1275,8 +1273,8 @@ async def config_cmd(
         .reply_text(
             (
                 "🔔 <b>Alertas de rastreio</b>\n\n"
-                "Abra <b>📦 Meus pacotes</b>, toque na encomenda "
-                "e use <b>⚙️ Alertas</b> para escolher quais "
+                "Abra <b>📦 Meus pacotes</b>, selecione a encomenda "
+                "e use <b>🔔 Alertas</b> para escolher quais "
                 "movimentações quer receber.\n\n"
                 "Você pode separar saída para entrega, problemas, "
                 "entrega concluída e movimentações intermediárias.\n\n"
@@ -1392,7 +1390,7 @@ async def callback(
 
         if not sub:
             await query.answer(
-                "Rastreio não encontrado.",
+                "Essa encomenda não está mais disponível.",
                 show_alert=True,
             )
             return
@@ -1876,21 +1874,21 @@ async def privacy_cmd(
                 "preferências de alerta e eventos "
                 "de rastreio necessários para "
                 "prestar o serviço. Quando você confirma "
-                "um código encontrado em mensagem ou print, "
+                "um código encontrado em uma mensagem ou imagem, "
                 "o bot também pode guardar loja, número do "
                 "pedido e nome do produto detectados para "
                 "organizar a encomenda.\n\n"
-                "📸 Prints são processados pelo OCR no próprio "
-                "servidor do bot e a imagem não é gravada no "
-                "banco nem mantida como arquivo da aplicação "
-                "após a leitura. Tokens e chaves ficam apenas "
-                "no servidor. CPF/CNPJ não é coletado nesta versão.\n\n"
+                "📸 Imagens são analisadas localmente no servidor: "
+                "primeiro por QR Code/código de barras e, quando necessário, "
+                "por OCR. A imagem não é gravada no banco nem mantida "
+                "como arquivo da aplicação após a leitura. Tokens e chaves "
+                "ficam apenas no servidor. CPF/CNPJ não é coletado nesta versão.\n\n"
                 "Links compartilháveis usam uma "
                 "assinatura para impedir a criação "
                 "manual de convites para outros "
                 "rastreios.\n\n"
                 "Para excluir um código salvo, use "
-                "o botão 🗑 Remover pacote no menu principal."
+                "o botão 🗑 Remover no menu principal."
             ),
             parse_mode=ParseMode.HTML,
         )
