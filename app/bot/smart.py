@@ -36,6 +36,9 @@ from app.services.insights import (
 from app.services.preferences import (
     get_subscription_preference,
 )
+from app.services.telemetry import (
+    record_runtime_event,
+)
 from app.status import status_label
 
 log = logging.getLogger(__name__)
@@ -45,6 +48,43 @@ _ocr_last_use: dict[int, float] = {}
 _ocr_semaphore = asyncio.Semaphore(
     max(1, settings.image_ocr_concurrency)
 )
+
+
+def _queue_image_metric(
+    update: Update,
+    context: CallbackContext,
+    *,
+    name: str,
+    ok: bool,
+    started: float,
+    detail: str | None = None,
+) -> None:
+    duration_ms = max(
+        0,
+        int(
+            round(
+                (
+                    time.monotonic()
+                    - started
+                )
+                * 1000
+            )
+        ),
+    )
+    context.application.create_task(
+        record_runtime_event(
+            kind="image_scan",
+            name=name,
+            ok=ok,
+            duration_ms=duration_ms,
+            detail=detail,
+        ),
+        update=update,
+        name=(
+            "image-scan-telemetry-"
+            + name
+        ),
+    )
 
 
 def _tracking_service(context: CallbackContext):
@@ -813,6 +853,7 @@ async def photo_tracking(
         ] = []
 
         if barcode_available:
+            barcode_started = time.monotonic()
             try:
                 async with _ocr_semaphore:
                     barcode_candidates = (
@@ -827,11 +868,42 @@ async def photo_tracking(
                             ),
                         )
                     )
+
+                _queue_image_metric(
+                    update,
+                    context,
+                    name="barcode",
+                    ok=bool(
+                        barcode_candidates
+                    ),
+                    started=barcode_started,
+                    detail=(
+                        None
+                        if barcode_candidates
+                        else "no_candidate"
+                    ),
+                )
             except asyncio.TimeoutError:
+                _queue_image_metric(
+                    update,
+                    context,
+                    name="barcode",
+                    ok=False,
+                    started=barcode_started,
+                    detail="timeout",
+                )
                 log.warning(
                     "Scanner de barcode excedeu o tempo; usando OCR."
                 )
             except Exception:
+                _queue_image_metric(
+                    update,
+                    context,
+                    name="barcode",
+                    ok=False,
+                    started=barcode_started,
+                    detail="error",
+                )
                 log.exception(
                     "Falha no scanner de barcode; usando OCR."
                 )
@@ -857,6 +929,7 @@ async def photo_tracking(
             )
             return
 
+        ocr_started = time.monotonic()
         async with _ocr_semaphore:
             ocr_text = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -873,6 +946,20 @@ async def photo_tracking(
         candidates = extract_tracking_candidates(
             ocr_text,
             source="image_ocr",
+        )
+        _queue_image_metric(
+            update,
+            context,
+            name="ocr",
+            ok=bool(
+                candidates
+            ),
+            started=ocr_started,
+            detail=(
+                None
+                if candidates
+                else "no_candidate"
+            ),
         )
         if not candidates:
             await working.edit_text(
@@ -894,11 +981,29 @@ async def photo_tracking(
         )
 
     except asyncio.TimeoutError:
+        if "ocr_started" in locals():
+            _queue_image_metric(
+                update,
+                context,
+                name="ocr",
+                ok=False,
+                started=ocr_started,
+                detail="timeout",
+            )
         await working.edit_text(
             "⏱ A leitura demorou demais. "
             "Tente uma foto mais próxima da etiqueta."
         )
     except Exception:
+        if "ocr_started" in locals():
+            _queue_image_metric(
+                update,
+                context,
+                name="ocr",
+                ok=False,
+                started=ocr_started,
+                detail="error",
+            )
         log.exception(
             "Falha ao analisar imagem de rastreio"
         )
