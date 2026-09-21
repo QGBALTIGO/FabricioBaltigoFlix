@@ -15,7 +15,9 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("help", handlers.help_cmd))
     app.add_handler(CommandHandler("rastrear", handlers.track_cmd))
     app.add_handler(CommandHandler("meus", handlers.my_shipments))
-    app.add_handler(CommandHandler("hoje", smart.today_cmd))
+    app.add_handler(CommandHandler("resumo", smart.overview_cmd))
+    # Alias antigo mantido apenas por compatibilidade.
+    app.add_handler(CommandHandler("hoje", smart.overview_cmd))
     app.add_handler(CommandHandler("entregues", handlers.delivered))
     app.add_handler(CommandHandler("relatorio", handlers.report_cmd))
     app.add_handler(CommandHandler("config", handlers.config_cmd))
@@ -31,8 +33,8 @@ def register_handlers(app: Application) -> None:
         CallbackQueryHandler(
             smart.smart_callback,
             pattern=(
-                r"^(?:today:|todaylist:|smartadd:|smartcancel:|"
-                r"alertmenu:|alerttoggle:|assist:)"
+                r"^(?:overview:|overviewlist:|today:|todaylist:|"
+                r"smartadd:|smartcancel:|alertmenu:|alerttoggle:)"
             ),
         )
     )
