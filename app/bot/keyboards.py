@@ -15,7 +15,7 @@ from app.share import make_share_payload
 
 MAIN_MENU_OVERVIEW = "📦 Visão geral"
 MAIN_MENU_MY_PACKAGES = "📦 Meus pacotes"
-MAIN_MENU_REMOVE_PACKAGE = "🗑 Remover pacote"
+MAIN_MENU_REMOVE_PACKAGE = "🗑 Remover"
 
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
