@@ -577,6 +577,26 @@ async def photo_tracking(
     if not await _require_member(update, context):
         return
 
+    caption = str(message.caption or "").strip()
+    if caption:
+        candidates = extract_tracking_candidates(
+            caption,
+            source="image_caption",
+        )
+        if candidates:
+            await message.reply_text(
+                _candidate_preview_text(
+                    candidates,
+                    image=True,
+                ),
+                parse_mode=ParseMode.HTML,
+                reply_markup=_candidate_markup(
+                    candidates,
+                    context,
+                ),
+            )
+            return
+
     if not settings.image_ocr_enabled or not ocr_runtime_available():
         await message.reply_text(
             "📸 A leitura de prints está temporariamente indisponível. "
