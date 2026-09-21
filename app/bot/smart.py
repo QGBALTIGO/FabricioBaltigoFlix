@@ -389,8 +389,8 @@ async def _build_overview(
     if not subs:
         text = (
             "📦 <b>Visão geral</b>\n\n"
-            "Nenhuma encomenda acompanhada por enquanto.\n"
-            "Envie um código, uma mensagem da loja ou um print para começar."
+            "Nenhuma encomenda em acompanhamento por enquanto.\n"
+            "Envie um código, encaminhe uma mensagem ou mande uma foto da etiqueta para começar."
         )
     else:
         text_lines = [
@@ -695,24 +695,17 @@ async def _alert_menu(
         or sub.shipment.carrier_name
         or sub.shipment.tracking_number
     )
-    mode = (
-        "Personalizado"
-        if pref and pref.custom_alerts_enabled
-        else "Todas as movimentações (padrão)"
-    )
     status = (
-        "Ativados"
+        "ativados"
         if sub.notifications_enabled
-        else "Desativados"
+        else "desativados"
     )
 
     text = (
         "🔔 <b>Alertas</b>\n\n"
         f"📦 <b>{html.escape(name)}</b>\n"
-        f"Estado: <b>{status}</b>\n"
-        f"Modo: <b>{mode}</b>\n\n"
-        "Use o botão principal para ligar ou desligar todos os alertas. "
-        "Abaixo, você também pode escolher exatamente quais tipos de atualização quer receber."
+        f"Os alertas estão <b>{status}</b>.\n\n"
+        "Escolha quais movimentações deseja receber."
     )
     return text, _alert_menu_markup(
         sub,
@@ -769,7 +762,7 @@ async def photo_tracking(
         and not ocr_available
     ):
         await message.reply_text(
-            "📸 A leitura de etiquetas está temporariamente indisponível. "
+            "📸 A leitura de imagens está indisponível no momento. "
             "Envie o código de rastreio como texto."
         )
         return
@@ -924,8 +917,8 @@ async def photo_tracking(
 
         if not ocr_available:
             await working.edit_text(
-                "🔎 Não encontrei um código de rastreio legível na etiqueta. "
-                "Tente aproximar a câmera do código ou envie o código como texto."
+                "🔎 Não encontrei um código de rastreio legível nessa imagem. "
+                "Tente uma foto mais próxima da etiqueta ou envie o código como texto."
             )
             return
 
@@ -963,7 +956,7 @@ async def photo_tracking(
         )
         if not candidates:
             await working.edit_text(
-                "🔎 Analisei a etiqueta, mas não encontrei um código de rastreio com segurança. "
+                "🔎 Analisei a imagem, mas não encontrei um código de rastreio com segurança. "
                 "Tente uma foto mais próxima da etiqueta ou envie o código como texto."
             )
             return
@@ -1008,8 +1001,8 @@ async def photo_tracking(
             "Falha ao analisar imagem de rastreio"
         )
         await working.edit_text(
-            "📸 Não consegui analisar essa imagem agora. "
-            "Você pode enviar o código como texto."
+            "📸 Não foi possível analisar essa imagem agora. "
+            "Envie o código de rastreio como texto ou tente novamente em instantes."
         )
 
 
@@ -1104,7 +1097,7 @@ async def smart_callback(
         candidate = saved.pop(token, None)
         if not candidate:
             await query.edit_message_text(
-                "⌛ Essa confirmação expirou. Envie a mensagem ou o print novamente."
+                "⌛ Essa confirmação expirou. Envie a mensagem ou a imagem novamente."
             )
             return
 
@@ -1137,7 +1130,7 @@ async def smart_callback(
         )
         if not user or not sub:
             await query.answer(
-                "Rastreio não encontrado.",
+                "Essa encomenda não está mais disponível.",
                 show_alert=True,
             )
             return
