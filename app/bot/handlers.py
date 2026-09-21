@@ -968,70 +968,43 @@ async def bot_status(
     context: CallbackContext,
 ) -> None:
     async with SessionLocal() as session:
-        users = await session.scalar(
-            select(
-                func.count(User.id)
-            )
-        )
-        shipments = await session.scalar(
-            select(
-                func.count(
-                    Shipment.id
-                )
-            )
-        )
+        users = await session.scalar(select(func.count(User.id)))
+        shipments = await session.scalar(select(func.count(Shipment.id)))
         active = await session.scalar(
-            select(
-                func.count(
-                    Shipment.id
-                )
-            ).where(
-                Shipment.is_active.is_(
-                    True
-                )
-            )
+            select(func.count(Shipment.id)).where(Shipment.is_active.is_(True))
         )
 
     providers = []
-
+    if settings.melhor_rastreio_enabled:
+        providers.append("Melhor Rastreio GraphQL ✅")
+    if settings.direct_fallbacks_enabled:
+        providers.append("Fallbacks diretos ✅")
     if settings.seventeen_track_token:
-        providers.append(
-            "17TRACK ✅"
-        )
+        providers.append("17TRACK opcional ✅")
     if settings.ship24_api_key:
-        providers.append(
-            "Ship24 ✅"
-        )
+        providers.append("Ship24 opcional ✅")
+
     if not providers:
-        providers.append(
-            "Nenhum provedor ⚠️"
-        )
+        providers.append("Nenhuma fonte ⚠️")
 
     poller = (
-        "✅"
-        if settings
-        .fallback_poller_enabled
-        else (
-            "desativado "
-            "(webhook principal)"
-        )
+        "✅ inteligente"
+        if settings.tracking_poller_enabled
+        else "desativado"
     )
 
-    await (
-        update.effective_message
-        .reply_text(
-            (
-                "🟢 <b>"
-                f"{html.escape(settings.app_name)}"
-                "</b>\n\n"
-                f"Provedores: {', '.join(providers)}\n"
-                f"Polling de redundância: {poller}\n"
-                f"Usuários: {users or 0}\n"
-                f"Encomendas: {shipments or 0}\n"
-                f"Ativas: {active or 0}"
-            ),
-            parse_mode=ParseMode.HTML,
-        )
+    await update.effective_message.reply_text(
+        (
+            "🟢 <b>"
+            f"{html.escape(settings.app_name)}"
+            "</b>\n\n"
+            f"Fontes: {', '.join(providers)}\n"
+            f"Polling: {poller}\n"
+            f"Usuários: {users or 0}\n"
+            f"Encomendas: {shipments or 0}\n"
+            f"Ativas: {active or 0}"
+        ),
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -1039,112 +1012,58 @@ async def carriers(
     update: Update,
     context: CallbackContext,
 ) -> None:
-    query = " ".join(
-        context.args
-    ).strip()
+    query = " ".join(context.args).strip().lower()
 
-    ship24 = service(
-        context
-    ).ship24
+    catalog = [
+        ("Correios", "Melhor Rastreio + fallback direto"),
+        ("Jadlog", "Melhor Rastreio + fallback direto"),
+        ("J&T Express", "Melhor Rastreio"),
+        ("Loggi", "Melhor Rastreio"),
+        ("LATAM Cargo", "Melhor Rastreio"),
+        ("Azul Cargo", "Melhor Rastreio"),
+        ("Buslog", "Melhor Rastreio"),
+        ("Viação Mundo", "Melhor Rastreio"),
+        ("Melhor Envio", "Melhor Rastreio"),
+        ("Total Express", "fallback direto"),
+    ]
 
-    if not query:
-        await (
-            update.effective_message
-            .reply_text(
-                (
-                    "🚚 O bot usa autodetecção. "
-                    "Para procurar uma "
-                    "transportadora no catálogo, "
-                    "use "
-                    "<code>/transportadoras jadlog</code>."
-                ),
-                parse_mode=(
-                    ParseMode.HTML
-                ),
-            )
-        )
-        return
-
-    if not ship24:
-        await (
-            update.effective_message
-            .reply_text(
-                "🔎 A pesquisa do catálogo "
-                "exige a chave Ship24. "
-                "O rastreamento automático "
-                "pode continuar pelo "
-                "provedor principal."
-            )
-        )
-        return
-
-    try:
-        items = await (
-            ship24.search_carriers(
-                query
-            )
-        )
-
-        if not items:
-            await (
-                update.effective_message
-                .reply_text(
-                    "Nenhuma transportadora "
-                    "encontrada."
-                )
-            )
-            return
-
-        lines = [
-            "🚚 <b>Transportadoras encontradas</b>",
-            "",
+    if query:
+        catalog = [
+            item
+            for item in catalog
+            if query in item[0].lower()
         ]
 
-        for c in items[:15]:
-            name = (
-                c.get("courierName")
-                or c.get("name")
-                or "Transportadora"
-            )
-            code = (
-                c.get("courierCode")
-                or c.get("code")
-                or ""
-            )
+    if not catalog:
+        await update.effective_message.reply_text(
+            "Nenhuma transportadora encontrada nesse catálogo."
+        )
+        return
 
-            lines.append(
-                "• "
-                + html.escape(
-                    str(name)
-                )
-                + " <code>"
-                + html.escape(
-                    str(code)
-                )
-                + "</code>"
-            )
-
-        await (
-            update.effective_message
-            .reply_text(
-                "\n".join(lines),
-                parse_mode=(
-                    ParseMode.HTML
-                ),
-            )
+    lines = [
+        "🚚 <b>Transportadoras disponíveis</b>",
+        "",
+    ]
+    for name, source in catalog:
+        lines.append(
+            "• "
+            + html.escape(name)
+            + " — "
+            + html.escape(source)
         )
 
-    except Exception:
-        log.exception(
-            "Erro ao pesquisar transportadoras"
-        )
-        await (
-            update.effective_message
-            .reply_text(
-                "❌ Não consegui pesquisar "
-                "as transportadoras agora."
-            )
-        )
+    lines.extend(
+        [
+            "",
+            "💡 Você não precisa escolher a transportadora na maioria dos casos: "
+            "envie o código e o bot tenta as fontes automaticamente.",
+        ]
+    )
+
+    await update.effective_message.reply_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def callback(

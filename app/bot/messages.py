@@ -1,11 +1,11 @@
 WELCOME = """📦 <b>Rastreio Baltigo</b>
 
-Acompanhe encomendas dos Correios, Jadlog, J&T e milhares de transportadoras em um só lugar.
+Acompanhe Correios, Jadlog, J&T, Loggi, LATAM, Azul, Buslog, Total Express e outras fontes em um só lugar.
 
 <b>Como usar</b>
 • envie o código de rastreio diretamente;
 • ou use <code>/rastrear CODIGO</code>;
-• eu salvo o pacote e aviso quando houver movimentação.
+• eu salvo o pacote e aviso quando houver movimentação;\n• o bot troca de fonte automaticamente se uma delas ficar indisponível.
 
 Você também pode pesquisar seus rastreios, filtrar por status/transportadora, compartilhar o acompanhamento e receber aviso quando uma encomenda ficar muito tempo sem atualização.
 

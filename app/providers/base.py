@@ -5,6 +5,18 @@ from datetime import datetime
 from typing import Any, Protocol
 
 
+class ProviderError(RuntimeError):
+    pass
+
+
+class ProviderNotFound(ProviderError):
+    pass
+
+
+class ProviderUnavailable(ProviderError):
+    pass
+
+
 @dataclass(slots=True)
 class ProviderEvent:
     status: str

@@ -34,7 +34,9 @@ class User(Base):
     language: Mapped[str] = mapped_column(String(16), default="pt-BR")
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
     subscriptions: Mapped[list["Subscription"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -47,16 +49,24 @@ class Shipment(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     tracking_number: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     provider: Mapped[str] = mapped_column(String(32), default="pending", index=True)
-    provider_tracking_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    provider_tracking_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
     carrier_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     carrier_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="unknown", index=True)
     status_raw: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_location: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_event_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    registered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -86,7 +96,9 @@ class Subscription(Base):
     notify_level: Mapped[str] = mapped_column(String(20), default="important")
     notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
 
     user: Mapped[User] = relationship(back_populates="subscriptions")
     shipment: Mapped[Shipment] = relationship(back_populates="subscriptions")
@@ -108,8 +120,12 @@ class TrackingEvent(Base):
     status_raw: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str] = mapped_column(Text, default="")
     location: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    event_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
 
     shipment: Mapped[Shipment] = relationship(back_populates="events")
 
@@ -132,4 +148,40 @@ class NotificationLog(Base):
     )
     kind: Mapped[str] = mapped_column(String(40), index=True)
     dedupe_key: Mapped[str] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class ProviderHealth(Base):
+    __tablename__ = "provider_health"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    quarantined_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_success_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_failure_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
+class PollingState(Base):
+    __tablename__ = "polling_states"
+
+    shipment_id: Mapped[int] = mapped_column(
+        ForeignKey("shipments.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_check_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)

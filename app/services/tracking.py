@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,21 +11,26 @@ from sqlalchemy.orm import selectinload
 
 from app.config import Settings
 from app.models import (
+    PollingState,
+    ProviderHealth,
     Shipment,
     Subscription,
     TrackingEvent,
     User,
 )
-from app.providers.base import ProviderTracking
-from app.providers.seventeen_track import (
-    SeventeenTrackProvider,
+from app.providers.base import (
+    ProviderNotFound,
+    ProviderTracking,
+    ProviderUnavailable,
 )
+from app.providers.correios_direct import CorreiosDirectProvider
+from app.providers.jadlog_direct import JadlogDirectProvider
+from app.providers.melhor_rastreio import MelhorRastreioProvider
+from app.providers.seventeen_track import SeventeenTrackProvider
 from app.providers.ship24 import Ship24Provider
+from app.providers.total_express_direct import TotalExpressDirectProvider
 from app.status import normalize_status
-from app.utils import (
-    event_hash,
-    normalize_tracking_number,
-)
+from app.utils import event_hash, normalize_tracking_number
 
 
 @dataclass(slots=True)
@@ -37,6 +43,28 @@ class AddResult:
 class TrackingService:
     def __init__(self, settings: Settings):
         self.settings = settings
+
+        self.melhor = (
+            MelhorRastreioProvider(settings.http_timeout_seconds)
+            if settings.melhor_rastreio_enabled
+            else None
+        )
+        self.correios = (
+            CorreiosDirectProvider(settings.http_timeout_seconds)
+            if settings.direct_fallbacks_enabled
+            else None
+        )
+        self.jadlog = (
+            JadlogDirectProvider(settings.http_timeout_seconds)
+            if settings.direct_fallbacks_enabled
+            else None
+        )
+        self.total_express = (
+            TotalExpressDirectProvider(settings.http_timeout_seconds)
+            if settings.direct_fallbacks_enabled
+            else None
+        )
+
         self.seventeen = (
             SeventeenTrackProvider(
                 settings.seventeen_track_token,
@@ -54,6 +82,19 @@ class TrackingService:
             else None
         )
 
+        self._providers: dict[str, Any] = {
+            provider.name: provider
+            for provider in (
+                self.melhor,
+                self.correios,
+                self.jadlog,
+                self.total_express,
+                self.seventeen,
+                self.ship24,
+            )
+            if provider is not None
+        }
+
     async def ensure_user(
         self,
         session: AsyncSession,
@@ -62,9 +103,7 @@ class TrackingService:
         first_name: str | None = None,
     ) -> User:
         user = await session.scalar(
-            select(User).where(
-                User.telegram_id == telegram_id
-            )
+            select(User).where(User.telegram_id == telegram_id)
         )
         if user:
             user.username = username
@@ -91,12 +130,9 @@ class TrackingService:
                 Subscription.is_active.is_(True),
             )
         )
-        if (
-            active_count or 0
-        ) >= self.settings.max_active_shipments_per_user:
+        if (active_count or 0) >= self.settings.max_active_shipments_per_user:
             raise ValueError(
-                "Limite de "
-                f"{self.settings.max_active_shipments_per_user} "
+                f"Limite de {self.settings.max_active_shipments_per_user} "
                 "rastreios ativos atingido."
             )
 
@@ -107,97 +143,45 @@ class TrackingService:
         tracking_number: str,
         nickname: str | None = None,
     ) -> AddResult:
-        number = normalize_tracking_number(
-            tracking_number
-        )
+        number = normalize_tracking_number(tracking_number)
         shipment = await session.scalar(
-            select(Shipment).where(
-                Shipment.tracking_number == number
-            )
+            select(Shipment).where(Shipment.tracking_number == number)
         )
         created = shipment is None
         warning = None
 
         if shipment is None:
-            await self._check_user_limit(
-                session,
-                user.id,
-            )
-            shipment = Shipment(
-                tracking_number=number
-            )
+            await self._check_user_limit(session, user.id)
+            shipment = Shipment(tracking_number=number)
             session.add(shipment)
             await session.flush()
 
-            try:
-                provider_data = (
-                    await self._register_provider(
-                        number
-                    )
-                )
-                if provider_data:
-                    await self._apply_provider_data(
-                        session,
-                        shipment,
-                        provider_data,
-                    )
-                    try:
-                        detailed = (
-                            await self._fetch_provider(
-                                shipment
-                            )
-                        )
-                        if detailed:
-                            await self._apply_provider_data(
-                                session,
-                                shipment,
-                                detailed,
-                            )
-                    except Exception:
-                        # O registro já foi aceito.
-                        # A primeira atualização pode
-                        # chegar pelo webhook.
-                        pass
-                else:
-                    warning = (
-                        "Nenhum provedor de rastreio "
-                        "está configurado no servidor."
-                    )
-            except Exception as exc:
+            provider_data = await self._query_best_provider(session, shipment)
+            if provider_data:
+                await self._apply_provider_data(session, shipment, provider_data)
+            else:
                 warning = (
-                    str(exc)
-                    or (
-                        "Não foi possível consultar a "
-                        "transportadora agora."
-                    )
+                    "Código salvo. Ainda não encontrei movimentações nas fontes "
+                    "disponíveis; vou continuar verificando automaticamente."
                 )
+            await self._schedule_next_poll(session, shipment)
 
         subscription = await session.scalar(
             select(Subscription)
-            .options(
-                selectinload(
-                    Subscription.shipment
-                )
-            )
+            .options(selectinload(Subscription.shipment))
             .where(
                 Subscription.user_id == user.id,
-                Subscription.shipment_id
-                == shipment.id,
+                Subscription.shipment_id == shipment.id,
             )
         )
 
         if subscription is None:
-            await self._check_user_limit(
-                session,
-                user.id,
-            )
+            await self._check_user_limit(session, user.id)
             subscription = Subscription(
                 user_id=user.id,
                 shipment_id=shipment.id,
                 nickname=nickname,
-                notify_level=(
-                    self.settings.default_notify_level
-                ),
+                notify_level=self.settings.default_notify_level,
             )
             session.add(subscription)
         else:
@@ -207,9 +191,7 @@ class TrackingService:
 
         await session.commit()
         subscription = await self.get_subscription(
-            session,
-            user.id,
-            subscription.id,
+            session, user.id, subscription.id
         )
         return AddResult(
             subscription=subscription,
@@ -223,31 +205,22 @@ class TrackingService:
         user: User,
         shipment_id: int,
     ) -> Subscription | None:
-        shipment = await session.get(
-            Shipment,
-            shipment_id,
-        )
+        shipment = await session.get(Shipment, shipment_id)
         if not shipment:
             return None
 
         sub = await session.scalar(
             select(Subscription).where(
                 Subscription.user_id == user.id,
-                Subscription.shipment_id
-                == shipment_id,
+                Subscription.shipment_id == shipment_id,
             )
         )
         if sub is None:
-            await self._check_user_limit(
-                session,
-                user.id,
-            )
+            await self._check_user_limit(session, user.id)
             sub = Subscription(
                 user_id=user.id,
                 shipment_id=shipment_id,
-                notify_level=(
-                    self.settings.default_notify_level
-                ),
+                notify_level=self.settings.default_notify_level,
                 notifications_enabled=True,
                 is_active=True,
             )
@@ -256,127 +229,215 @@ class TrackingService:
             sub.is_active = True
             sub.notifications_enabled = True
             if sub.notify_level == "off":
-                sub.notify_level = (
-                    self.settings.default_notify_level
-                )
+                sub.notify_level = self.settings.default_notify_level
 
         await session.commit()
-        return await self.get_subscription(
-            session,
-            user.id,
-            sub.id,
-        )
+        return await self.get_subscription(session, user.id, sub.id)
 
-    async def _register_provider(
+    def _candidate_providers(self, shipment: Shipment) -> list[Any]:
+        candidates: list[Any] = []
+
+        if shipment.provider in self._providers:
+            candidates.append(self._providers[shipment.provider])
+
+        if self.melhor and self.melhor not in candidates:
+            candidates.append(self.melhor)
+
+        if self.correios and self.correios.can_handle(shipment.tracking_number):
+            candidates.append(self.correios)
+
+        if self.jadlog and self.jadlog.can_handle(shipment.tracking_number):
+            candidates.append(self.jadlog)
+
+        if (
+            self.total_express
+            and self.total_express.can_handle(shipment.tracking_number)
+        ):
+            candidates.append(self.total_express)
+
+        for optional in (self.seventeen, self.ship24):
+            if optional and optional not in candidates:
+                candidates.append(optional)
+
+        deduped: list[Any] = []
+        names: set[str] = set()
+        for provider in candidates:
+            if provider.name not in names:
+                names.add(provider.name)
+                deduped.append(provider)
+        return deduped
+
+    async def _query_best_provider(
         self,
-        number: str,
-    ) -> ProviderTracking | None:
-        last_error: Exception | None = None
-
-        if self.seventeen:
-            try:
-                return await self.seventeen.register(
-                    number
-                )
-            except Exception as exc:
-                last_error = exc
-
-        if self.ship24:
-            try:
-                return await self.ship24.register(
-                    number
-                )
-            except Exception as exc:
-                last_error = exc
-
-        if last_error:
-            raise last_error
-        return None
-
-    async def _fetch_provider(
-        self,
+        session: AsyncSession,
         shipment: Shipment,
     ) -> ProviderTracking | None:
-        if (
-            shipment.provider == "17track"
-            and self.seventeen
-        ):
-            return await self.seventeen.fetch(
+        for provider in self._candidate_providers(shipment):
+            if await self._provider_quarantined(session, provider.name):
+                continue
+
+            try:
+                data = await self._query_provider(provider, shipment)
+                await self._record_provider_success(session, provider.name)
+                return data
+            except ProviderNotFound:
+                # A source está saudável; apenas não conhece esse código.
+                continue
+            except ProviderUnavailable as exc:
+                await self._record_provider_failure(
+                    session, provider.name, str(exc)
+                )
+            except Exception as exc:
+                await self._record_provider_failure(
+                    session, provider.name, str(exc)
+                )
+
+        return None
+
+    async def _query_provider(
+        self,
+        provider: Any,
+        shipment: Shipment,
+    ) -> ProviderTracking:
+        if provider is self.seventeen:
+            if shipment.provider != provider.name:
+                registered = await provider.register(shipment.tracking_number)
+                if registered.events:
+                    return registered
+            return await provider.fetch(
                 shipment.tracking_number,
                 shipment.carrier_code,
                 shipment.provider_tracking_id,
             )
-        if (
-            shipment.provider == "ship24"
-            and self.ship24
-        ):
-            return await self.ship24.fetch(
-                shipment.tracking_number,
-                shipment.carrier_code,
-                shipment.provider_tracking_id,
-            )
-        return await self._register_provider(
-            shipment.tracking_number
+
+        if provider is self.ship24 and shipment.provider != provider.name:
+            return await provider.register(shipment.tracking_number)
+
+        data = await provider.fetch(
+            shipment.tracking_number,
+            shipment.carrier_code,
+            shipment.provider_tracking_id,
         )
+        if not data.events and not data.status_raw:
+            raise ProviderNotFound("Fonte respondeu sem eventos.")
+        return data
+
+    async def _health_row(
+        self,
+        session: AsyncSession,
+        provider_name: str,
+    ) -> ProviderHealth:
+        row = await session.scalar(
+            select(ProviderHealth).where(
+                ProviderHealth.provider == provider_name
+            )
+        )
+        if row is None:
+            row = ProviderHealth(provider=provider_name)
+            session.add(row)
+            await session.flush()
+        return row
+
+    @staticmethod
+    def _as_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    async def _provider_quarantined(
+        self,
+        session: AsyncSession,
+        provider_name: str,
+    ) -> bool:
+        row = await self._health_row(session, provider_name)
+        until = self._as_utc(row.quarantined_until)
+        return bool(until and until > datetime.now(timezone.utc))
+
+    async def _record_provider_success(
+        self,
+        session: AsyncSession,
+        provider_name: str,
+    ) -> None:
+        row = await self._health_row(session, provider_name)
+        row.consecutive_failures = 0
+        row.quarantined_until = None
+        row.last_success_at = datetime.now(timezone.utc)
+        row.last_error = None
+        await session.flush()
+
+    async def _record_provider_failure(
+        self,
+        session: AsyncSession,
+        provider_name: str,
+        error: str,
+    ) -> None:
+        row = await self._health_row(session, provider_name)
+        row.consecutive_failures += 1
+        row.last_failure_at = datetime.now(timezone.utc)
+        row.last_error = (error or "erro desconhecido")[:500]
+
+        failures = row.consecutive_failures
+        quarantine = None
+        if failures >= 12:
+            quarantine = timedelta(hours=24)
+        elif failures >= 6:
+            quarantine = timedelta(hours=6)
+        elif failures >= 3:
+            quarantine = timedelta(hours=1)
+
+        if quarantine:
+            row.quarantined_until = datetime.now(timezone.utc) + quarantine
+        await session.flush()
 
     async def refresh_shipment(
         self,
         session: AsyncSession,
         shipment: Shipment,
     ) -> ProviderTracking | None:
-        data, _ = await self.refresh_with_events(
-            session,
-            shipment,
-        )
+        data, _ = await self.refresh_with_events(session, shipment)
         return data
 
     async def refresh_with_events(
         self,
         session: AsyncSession,
         shipment: Shipment,
-    ) -> tuple[
-        ProviderTracking | None,
-        list[TrackingEvent],
-    ]:
-        provider_data = await self._fetch_provider(
-            shipment
-        )
+    ) -> tuple[ProviderTracking | None, list[TrackingEvent]]:
+        provider_data = await self._query_best_provider(session, shipment)
         new_events: list[TrackingEvent] = []
+
         if provider_data:
-            new_events = (
-                await self._apply_provider_data(
-                    session,
-                    shipment,
-                    provider_data,
-                )
+            new_events = await self._apply_provider_data(
+                session, shipment, provider_data
             )
-            await session.commit()
+            await self._schedule_next_poll(session, shipment)
+        else:
+            await self._schedule_next_poll(
+                session,
+                shipment,
+                error="Nenhuma fonte encontrou o código nesta rodada.",
+            )
+
+        await session.commit()
         return provider_data, new_events
 
     async def apply_webhook(
         self,
         session: AsyncSession,
         data: ProviderTracking,
-    ) -> tuple[
-        Shipment | None,
-        list[TrackingEvent],
-    ]:
+    ) -> tuple[Shipment | None, list[TrackingEvent]]:
         shipment = await session.scalar(
             select(Shipment).where(
                 Shipment.tracking_number
-                == normalize_tracking_number(
-                    data.tracking_number
-                )
+                == normalize_tracking_number(data.tracking_number)
             )
         )
         if not shipment:
             return None, []
 
-        new_events = await self._apply_provider_data(
-            session,
-            shipment,
-            data,
-        )
+        new_events = await self._apply_provider_data(session, shipment, data)
+        await self._schedule_next_poll(session, shipment)
         await session.commit()
         return shipment, new_events
 
@@ -386,31 +447,19 @@ class TrackingService:
         shipment: Shipment,
         data: ProviderTracking,
     ) -> list[TrackingEvent]:
-        shipment.provider = (
-            data.provider
-            or shipment.provider
-        )
+        shipment.provider = data.provider or shipment.provider
         shipment.provider_tracking_id = (
-            data.provider_tracking_id
-            or shipment.provider_tracking_id
+            data.provider_tracking_id or shipment.provider_tracking_id
         )
-        shipment.carrier_code = (
-            data.carrier_code
-            or shipment.carrier_code
-        )
-        shipment.carrier_name = (
-            data.carrier_name
-            or shipment.carrier_name
-        )
-        shipment.status_raw = (
-            data.status_raw
-            or shipment.status_raw
-        )
+        shipment.carrier_code = data.carrier_code or shipment.carrier_code
+        shipment.carrier_name = data.carrier_name or shipment.carrier_name
+        shipment.status_raw = data.status_raw or shipment.status_raw
 
         try:
             shipment.extra_json = json.dumps(
                 data.raw,
                 ensure_ascii=False,
+                default=str,
             )[:20000]
         except Exception:
             pass
@@ -427,8 +476,7 @@ class TrackingService:
             )
             exists = await session.scalar(
                 select(TrackingEvent.id).where(
-                    TrackingEvent.shipment_id
-                    == shipment.id,
+                    TrackingEvent.shipment_id == shipment.id,
                     TrackingEvent.event_hash == h,
                 )
             )
@@ -448,44 +496,72 @@ class TrackingService:
             new_events.append(model)
 
         if data.events:
-            latest = max(
-                data.events,
-                key=lambda x: x.event_at,
-            )
+            latest = max(data.events, key=lambda item: item.event_at)
             shipment.status = latest.status
-            shipment.status_raw = (
-                latest.status_raw
-                or data.status_raw
-            )
-            shipment.last_description = (
-                latest.description
-            )
-            shipment.last_location = (
-                latest.location
-            )
-            shipment.last_event_at = (
-                latest.event_at
-            )
-            shipment.is_active = (
-                latest.status != "delivered"
-            )
+            shipment.status_raw = latest.status_raw or data.status_raw
+            shipment.last_description = latest.description
+            shipment.last_location = latest.location
+            shipment.last_event_at = latest.event_at
+            shipment.is_active = latest.status != "delivered"
             if latest.status == "delivered":
-                shipment.delivered_at = (
-                    latest.event_at
-                )
-
+                shipment.delivered_at = latest.event_at
         elif data.status_raw:
-            shipment.status = normalize_status(
-                data.status_raw
-            )
-
-        elif (
-            data.provider
-            and shipment.status == "unknown"
-        ):
+            shipment.status = normalize_status(data.status_raw)
+        elif data.provider and shipment.status == "unknown":
             shipment.status = "info_received"
 
         return new_events
+
+    def poll_interval_minutes(self, status: str) -> int:
+        if status == "out_for_delivery":
+            return self.settings.poll_out_for_delivery_minutes
+        if status == "arrived_destination":
+            return self.settings.poll_destination_minutes
+        if status in {"picked_up", "in_transit"}:
+            return self.settings.poll_transit_minutes
+        if status in {
+            "customs",
+            "available_for_pickup",
+            "delivery_failed",
+            "exception",
+            "returned",
+        }:
+            return self.settings.poll_exception_minutes
+        return self.settings.poll_unknown_minutes
+
+    async def _schedule_next_poll(
+        self,
+        session: AsyncSession,
+        shipment: Shipment,
+        error: str | None = None,
+    ) -> None:
+        state = await session.get(PollingState, shipment.id)
+        if state is None:
+            state = PollingState(shipment_id=shipment.id)
+            session.add(state)
+
+        now = datetime.now(timezone.utc)
+        state.last_checked_at = now
+        state.last_error = error[:500] if error else None
+
+        if shipment.status == "delivered" or not shipment.is_active:
+            state.next_check_at = None
+        else:
+            minutes = max(5, self.poll_interval_minutes(shipment.status))
+            state.next_check_at = now + timedelta(minutes=minutes)
+        await session.flush()
+
+    async def provider_health_snapshot(
+        self,
+        session: AsyncSession,
+    ) -> list[ProviderHealth]:
+        return list(
+            (
+                await session.scalars(
+                    select(ProviderHealth).order_by(ProviderHealth.provider)
+                )
+            ).all()
+        )
 
     async def find_subscriptions(
         self,
@@ -499,102 +575,57 @@ class TrackingService:
         page: int = 0,
         page_size: int | None = None,
     ) -> tuple[list[Subscription], int]:
-        page_size = (
-            page_size
-            or self.settings.list_page_size
-        )
+        page_size = page_size or self.settings.list_page_size
         conditions = [
             Subscription.user_id == user_id,
             Subscription.is_active.is_(True),
         ]
 
         if delivered is True:
-            conditions.append(
-                Shipment.status == "delivered"
-            )
+            conditions.append(Shipment.status == "delivered")
         elif delivered is False:
-            conditions.append(
-                Shipment.status != "delivered"
-            )
+            conditions.append(Shipment.status != "delivered")
 
         if status:
-            conditions.append(
-                Shipment.status == status
-            )
+            conditions.append(Shipment.status == status)
         if carrier:
             conditions.append(
-                func.lower(
-                    Shipment.carrier_name
-                )
-                == carrier.lower()
+                func.lower(Shipment.carrier_name) == carrier.lower()
             )
         if query:
             q = f"%{query.strip()}%"
             conditions.append(
                 or_(
-                    Shipment.tracking_number.ilike(
-                        q
-                    ),
-                    Shipment.carrier_name.ilike(
-                        q
-                    ),
+                    Shipment.tracking_number.ilike(q),
+                    Shipment.carrier_name.ilike(q),
                     Shipment.status.ilike(q),
-                    Shipment.status_raw.ilike(
-                        q
-                    ),
-                    Shipment.last_description.ilike(
-                        q
-                    ),
+                    Shipment.status_raw.ilike(q),
+                    Shipment.last_description.ilike(q),
                     Subscription.nickname.ilike(q),
                 )
             )
 
         count_stmt = (
-            select(
-                func.count(
-                    Subscription.id
-                )
-            )
+            select(func.count(Subscription.id))
             .join(Shipment)
             .where(*conditions)
         )
-        total = int(
-            await session.scalar(count_stmt)
-            or 0
-        )
+        total = int(await session.scalar(count_stmt) or 0)
 
         stmt = (
             select(Subscription)
-            .options(
-                selectinload(
-                    Subscription.shipment
-                )
-            )
+            .options(selectinload(Subscription.shipment))
             .join(Shipment)
             .where(*conditions)
             .order_by(
-                Shipment.last_event_at
-                .desc()
-                .nullslast(),
+                Shipment.last_event_at.desc().nullslast(),
                 Subscription.id.desc(),
             )
-            .offset(
-                max(0, page)
-                * page_size
-            )
+            .offset(max(0, page) * page_size)
             .limit(page_size)
         )
 
-        return (
-            list(
-                (
-                    await session.scalars(
-                        stmt
-                    )
-                ).all()
-            ),
-            total,
-        )
+        return list((await session.scalars(stmt)).all()), total
 
     async def list_subscriptions(
         self,
@@ -617,33 +648,23 @@ class TrackingService:
         user_id: int,
     ) -> list[str]:
         stmt = (
-            select(
-                Shipment.carrier_name
-            )
+            select(Shipment.carrier_name)
             .join(
                 Subscription,
-                Subscription.shipment_id
-                == Shipment.id,
+                Subscription.shipment_id == Shipment.id,
             )
             .where(
                 Subscription.user_id == user_id,
                 Subscription.is_active.is_(True),
-                Shipment.carrier_name.is_not(
-                    None
-                ),
+                Shipment.carrier_name.is_not(None),
             )
             .distinct()
-            .order_by(
-                Shipment.carrier_name
-            )
+            .order_by(Shipment.carrier_name)
         )
-
         return [
-            str(x)
-            for x in (
-                await session.scalars(stmt)
-            ).all()
-            if x
+            str(item)
+            for item in (await session.scalars(stmt)).all()
+            if item
         ]
 
     async def get_subscription(
@@ -654,16 +675,10 @@ class TrackingService:
     ) -> Subscription | None:
         return await session.scalar(
             select(Subscription)
-            .options(
-                selectinload(
-                    Subscription.shipment
-                )
-            )
+            .options(selectinload(Subscription.shipment))
             .where(
-                Subscription.id
-                == subscription_id,
-                Subscription.user_id
-                == user_id,
+                Subscription.id == subscription_id,
+                Subscription.user_id == user_id,
             )
         )
 
@@ -677,14 +692,8 @@ class TrackingService:
             (
                 await session.scalars(
                     select(TrackingEvent)
-                    .where(
-                        TrackingEvent.shipment_id
-                        == shipment_id
-                    )
-                    .order_by(
-                        TrackingEvent.event_at
-                        .desc()
-                    )
+                    .where(TrackingEvent.shipment_id == shipment_id)
+                    .order_by(TrackingEvent.event_at.desc())
                     .limit(limit)
                 )
             ).all()
@@ -694,28 +703,25 @@ class TrackingService:
         self,
         session: AsyncSession,
     ) -> list[Shipment]:
-        cutoff = (
-            datetime.now(timezone.utc)
-            - timedelta(
-                days=(
-                    self.settings
-                    .poll_tracking_days
-                )
-            )
-        )
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=self.settings.poll_tracking_days)
 
-        return list(
-            (
-                await session.scalars(
-                    select(Shipment).where(
-                        Shipment.is_active.is_(
-                            True
-                        ),
-                        Shipment.status
-                        != "delivered",
-                        Shipment.registered_at
-                        >= cutoff,
-                    )
-                )
-            ).all()
+        stmt = (
+            select(Shipment)
+            .outerjoin(
+                PollingState,
+                PollingState.shipment_id == Shipment.id,
+            )
+            .where(
+                Shipment.is_active.is_(True),
+                Shipment.status != "delivered",
+                Shipment.registered_at >= cutoff,
+                or_(
+                    PollingState.next_check_at.is_(None),
+                    PollingState.next_check_at <= now,
+                ),
+            )
+            .order_by(Shipment.last_event_at.asc().nullsfirst())
+            .limit(500)
         )
+        return list((await session.scalars(stmt)).all())

@@ -24,6 +24,11 @@ class Settings(BaseSettings):
 
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
 
+    # Primary free tracking source.
+    melhor_rastreio_enabled: bool = True
+    direct_fallbacks_enabled: bool = True
+
+    # Optional paid/external fallbacks kept for compatibility.
     seventeen_track_token: str = ""
     seventeen_track_verify_signature: bool = True
     ship24_api_key: str = ""
@@ -44,9 +49,16 @@ class Settings(BaseSettings):
     stale_monitor_enabled: bool = True
     stale_check_interval_minutes: int = 60
 
-    fallback_poller_enabled: bool = False
-    poll_interval_minutes: int = 120
+    tracking_poller_enabled: bool = True
+    monitor_tick_minutes: int = 5
     poll_tracking_days: int = 30
+    poll_request_spacing_seconds: float = 0.25
+
+    poll_unknown_minutes: int = 60
+    poll_transit_minutes: int = 30
+    poll_destination_minutes: int = 15
+    poll_out_for_delivery_minutes: int = 5
+    poll_exception_minutes: int = 30
 
     support_url: str = ""
 
@@ -67,7 +79,12 @@ class Settings(BaseSettings):
 
     @property
     def has_tracking_provider(self) -> bool:
-        return bool(self.seventeen_track_token or self.ship24_api_key)
+        return bool(
+            self.melhor_rastreio_enabled
+            or self.direct_fallbacks_enabled
+            or self.seventeen_track_token
+            or self.ship24_api_key
+        )
 
     @property
     def effective_share_secret(self) -> str:
