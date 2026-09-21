@@ -8,7 +8,12 @@ from datetime import (
     timezone,
 )
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import (
+    and_,
+    or_,
+    select,
+    text as sql_text,
+)
 from sqlalchemy.orm import selectinload
 from telegram import Bot
 from telegram.error import (
@@ -17,7 +22,10 @@ from telegram.error import (
 )
 
 from app.config import Settings
-from app.database import SessionLocal
+from app.database import (
+    SessionLocal,
+    engine,
+)
 from app.models import (
     NotificationLog,
     Shipment,
@@ -403,7 +411,7 @@ async def _stale_loop(
         )
 
 
-async def monitoring_loop(
+async def _run_monitor_tasks(
     bot: Bot,
     tracking_service: TrackingService,
     settings: Settings,
@@ -448,3 +456,85 @@ async def monitoring_loop(
             *tasks,
             return_exceptions=True,
         )
+
+
+async def monitoring_loop(
+    bot: Bot,
+    tracking_service: TrackingService,
+    settings: Settings,
+) -> None:
+    # Permite várias réplicas web sem multiplicar o poller.
+    # O lock é session-level e fica preso a esta conexão.
+    is_postgres = (
+        settings.database_url.startswith(
+            "postgresql://"
+        )
+        or settings.database_url.startswith(
+            "postgres://"
+        )
+        or settings.database_url.startswith(
+            "postgresql+asyncpg://"
+        )
+    )
+
+    if not is_postgres:
+        await _run_monitor_tasks(
+            bot,
+            tracking_service,
+            settings,
+        )
+        return
+
+    lock_key = 734925817
+
+    while True:
+        try:
+            async with engine.connect() as conn:
+                acquired = bool(
+                    await conn.scalar(
+                        sql_text(
+                            "SELECT pg_try_advisory_lock(:key)"
+                        ),
+                        {"key": lock_key},
+                    )
+                )
+                await conn.commit()
+
+                if not acquired:
+                    log.info(
+                        "Monitor em standby; outra réplica é líder."
+                    )
+                    await asyncio.sleep(30)
+                    continue
+
+                log.info(
+                    "Monitor automático assumiu liderança."
+                )
+
+                try:
+                    await _run_monitor_tasks(
+                        bot,
+                        tracking_service,
+                        settings,
+                    )
+                finally:
+                    try:
+                        await conn.execute(
+                            sql_text(
+                                "SELECT pg_advisory_unlock(:key)"
+                            ),
+                            {"key": lock_key},
+                        )
+                        await conn.commit()
+                    except Exception:
+                        log.exception(
+                            "Falha ao liberar advisory lock do monitor."
+                        )
+
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception(
+                "Falha na eleição do monitor; tentando novamente."
+            )
+            await asyncio.sleep(30)
