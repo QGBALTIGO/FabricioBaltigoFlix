@@ -5,7 +5,6 @@ import html
 import logging
 import secrets
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select
@@ -495,7 +494,6 @@ def _alert_menu_markup(
 
 async def _alert_menu(
     session,
-    user: User,
     sub: Subscription,
 ) -> tuple[str, InlineKeyboardMarkup]:
     pref = await get_subscription_preference(
@@ -798,7 +796,6 @@ async def smart_callback(
         if data.startswith("alertmenu:"):
             text, markup = await _alert_menu(
                 session,
-                user,
                 sub,
             )
             await query.edit_message_text(
@@ -874,7 +871,6 @@ async def smart_callback(
             await session.commit()
             text, markup = await _alert_menu(
                 session,
-                user,
                 sub,
             )
             await query.edit_message_text(
