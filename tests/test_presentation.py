@@ -48,3 +48,48 @@ def test_tracking_card_new_pattern():
     assert "CURITIBA/PR" in text
     assert "06/10/2026" in text
     assert "Alertas" not in text
+
+
+
+def test_tracking_rich_message_uses_native_bordered_table():
+    import json
+    from types import SimpleNamespace
+
+    from app.presentation import format_tracking_rich_html
+
+    shipment = SimpleNamespace(
+        tracking_number="AP499229999BR",
+        carrier_name="Correios",
+        status="in_transit",
+        last_event_at="2026-09-18T16:40:00-03:00",
+        last_location="BALNEARIO CAMBORIU, SC",
+        extra_json=json.dumps(
+            {
+                "estimatedDelivery": "2026-10-06T23:59:59-03:00",
+                "trackingEvents": [
+                    {
+                        "createdAt": "2026-09-18T16:40:00-03:00",
+                        "from": "01 - BALNEARIO CAMBORIU/SC",
+                        "to": "01 - CURITIBA/PR",
+                    }
+                ],
+            }
+        ),
+    )
+    subscription = SimpleNamespace(
+        nickname="Placa 10k",
+    )
+
+    rich = format_tracking_rich_html(
+        subscription,
+        shipment,
+        "America/Sao_Paulo",
+    )
+
+    assert rich.startswith("<aside>")
+    assert "<table bordered>" in rich
+    assert rich.count("<tr><td>") >= 5
+    assert "AP499229999BR" in rich
+    assert "Placa 10k" in rich
+    assert "Destino:" in rich
+    assert "06/10/2026" in rich

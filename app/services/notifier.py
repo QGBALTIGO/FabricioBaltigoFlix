@@ -8,9 +8,16 @@ from sqlalchemy.orm import selectinload
 from telegram import Bot
 from telegram.error import Forbidden, TelegramError
 
+from app.bot.rich import (
+    TelegramRichMessageError,
+    send_rich_message,
+)
 from app.config import get_settings
 from app.models import Shipment, Subscription, TrackingEvent
-from app.presentation import format_tracking_card
+from app.presentation import (
+    format_tracking_card,
+    format_tracking_rich_html,
+)
 from app.status import should_notify
 
 settings = get_settings()
@@ -67,15 +74,27 @@ async def notify_new_events(
                 continue
 
             try:
-                await bot.send_message(
-                    chat_id=sub.user.telegram_id,
-                    text=format_event_notification(
-                        sub,
-                        shipment,
-                        event,
-                    ),
-                    parse_mode="HTML",
-                )
+                try:
+                    await send_rich_message(
+                        settings.telegram_bot_token,
+                        sub.user.telegram_id,
+                        format_tracking_rich_html(
+                            sub,
+                            shipment,
+                            settings.display_timezone,
+                            event=event,
+                        ),
+                    )
+                except TelegramRichMessageError:
+                    await bot.send_message(
+                        chat_id=sub.user.telegram_id,
+                        text=format_event_notification(
+                            sub,
+                            shipment,
+                            event,
+                        ),
+                        parse_mode="HTML",
+                    )
                 sent += 1
 
             except Forbidden:

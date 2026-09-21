@@ -27,6 +27,11 @@ from app.bot.messages import (
     SECURITY,
     WELCOME,
 )
+from app.bot.rich import (
+    TelegramRichMessageError,
+    edit_rich_message,
+    send_rich_message,
+)
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import (
@@ -35,7 +40,10 @@ from app.models import (
     TrackingEvent,
     User,
 )
-from app.presentation import format_tracking_card
+from app.presentation import (
+    format_tracking_card,
+    format_tracking_rich_html,
+)
 from app.share import verify_share_payload
 from app.status import (
     status_explanation,
@@ -82,6 +90,88 @@ def fmt_shipment(
         sub.shipment,
         settings.display_timezone,
     )
+
+
+async def _edit_tracking_card(
+    context: CallbackContext,
+    message,
+    sub: Subscription,
+    *,
+    warning: str | None = None,
+) -> None:
+    markup = _keyboard(
+        context,
+        sub,
+    )
+    rich_html = format_tracking_rich_html(
+        sub,
+        sub.shipment,
+        settings.display_timezone,
+        warning=warning,
+    )
+
+    chat_id = (
+        getattr(message, "chat_id", None)
+        or message.chat.id
+    )
+
+    try:
+        await edit_rich_message(
+            settings.telegram_bot_token,
+            chat_id,
+            message.message_id,
+            rich_html,
+            reply_markup=markup,
+        )
+    except TelegramRichMessageError:
+        log.exception(
+            "Falha no Rich Message; usando fallback HTML."
+        )
+        text = fmt_shipment(sub)
+        if warning:
+            text += (
+                "\n\n⚠️ "
+                + html.escape(warning)
+            )
+        await message.edit_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup,
+        )
+
+
+async def _send_tracking_card(
+    context: CallbackContext,
+    chat_id: int,
+    sub: Subscription,
+) -> None:
+    markup = _keyboard(
+        context,
+        sub,
+    )
+    rich_html = format_tracking_rich_html(
+        sub,
+        sub.shipment,
+        settings.display_timezone,
+    )
+
+    try:
+        await send_rich_message(
+            settings.telegram_bot_token,
+            chat_id,
+            rich_html,
+            reply_markup=markup,
+        )
+    except TelegramRichMessageError:
+        log.exception(
+            "Falha ao enviar Rich Message; usando fallback HTML."
+        )
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=fmt_shipment(sub),
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup,
+        )
 
 
 async def _ensure_current_user(
@@ -138,25 +228,15 @@ async def start(
 
                 if sub:
                     await (
-                        update
-                        .effective_message
-                        .reply_text(
-                            (
-                                "🔗 <b>Rastreio "
-                                "compartilhado adicionado "
-                                "aos seus pacotes.</b>\n\n"
-                                + fmt_shipment(sub)
-                            ),
-                            parse_mode=(
-                                ParseMode.HTML
-                            ),
-                            reply_markup=(
-                                _keyboard(
-                                    context,
-                                    sub,
-                                )
-                            ),
+                        update.effective_message.reply_text(
+                            "🔗 <b>Rastreio compartilhado adicionado aos seus pacotes.</b>",
+                            parse_mode=ParseMode.HTML,
                         )
+                    )
+                    await _send_tracking_card(
+                        context,
+                        update.effective_chat.id,
+                        sub,
                     )
                     return
 
@@ -358,25 +438,11 @@ async def add_tracking(
                 nickname=nickname,
             )
 
-            text = fmt_shipment(
-                result.subscription
-            )
-
-            if result.warning:
-                text += (
-                    "\n\n⚠️ "
-                    + html.escape(
-                        result.warning
-                    )
-                )
-
-            await msg.edit_text(
-                text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=_keyboard(
-                    context,
-                    result.subscription,
-                ),
+            await _edit_tracking_card(
+                context,
+                msg,
+                result.subscription,
+                warning=result.warning,
             )
 
     except ValueError as exc:
@@ -1274,13 +1340,10 @@ async def callback(
             return
 
         if action == "open":
-            await query.edit_message_text(
-                fmt_shipment(sub),
-                parse_mode=ParseMode.HTML,
-                reply_markup=_keyboard(
-                    context,
-                    sub,
-                ),
+            await _edit_tracking_card(
+                context,
+                query.message,
+                sub,
             )
 
         elif action == "refresh":
@@ -1300,15 +1363,10 @@ async def callback(
                     sub_id,
                 )
 
-                await query.edit_message_text(
-                    fmt_shipment(sub),
-                    parse_mode=(
-                        ParseMode.HTML
-                    ),
-                    reply_markup=_keyboard(
-                        context,
-                        sub,
-                    ),
+                await _edit_tracking_card(
+                    context,
+                    query.message,
+                    sub,
                 )
 
             except Exception:
@@ -1457,13 +1515,10 @@ async def callback(
 
             await session.commit()
 
-            await query.edit_message_text(
-                fmt_shipment(sub),
-                parse_mode=ParseMode.HTML,
-                reply_markup=_keyboard(
-                    context,
-                    sub,
-                ),
+            await _edit_tracking_card(
+                context,
+                query.message,
+                sub,
             )
 
         elif (
@@ -1486,13 +1541,10 @@ async def callback(
 
             await session.commit()
 
-            await query.edit_message_text(
-                fmt_shipment(sub),
-                parse_mode=ParseMode.HTML,
-                reply_markup=_keyboard(
-                    context,
-                    sub,
-                ),
+            await _edit_tracking_card(
+                context,
+                query.message,
+                sub,
             )
 
         elif action == "delete":
@@ -1573,20 +1625,14 @@ async def rename_finish(
         await session.commit()
 
         await (
-            update.effective_message
-            .reply_text(
-                (
-                    "✅ Nome atualizado.\n\n"
-                    + fmt_shipment(sub)
-                ),
-                parse_mode=(
-                    ParseMode.HTML
-                ),
-                reply_markup=_keyboard(
-                    context,
-                    sub,
-                ),
+            update.effective_message.reply_text(
+                "✅ Nome atualizado."
             )
+        )
+        await _send_tracking_card(
+            context,
+            update.effective_chat.id,
+            sub,
         )
 
 

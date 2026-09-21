@@ -253,3 +253,106 @@ def format_tracking_card(
         )
 
     return "\n".join(lines)
+
+
+
+def format_tracking_rich_html(
+    subscription: Subscription,
+    shipment: Shipment,
+    timezone_name: str,
+    *,
+    event: TrackingEvent | None = None,
+    warning: str | None = None,
+) -> str:
+    """Telegram Rich Message HTML using pull quote + bordered table."""
+    current_status = event.status if event else shipment.status
+    current_time = event.event_at if event else shipment.last_event_at
+    current_location = event.location if event else shipment.last_location
+
+    name = html.escape(
+        subscription.nickname
+        or shipment.carrier_name
+        or "Minha encomenda"
+    )
+    number = html.escape(shipment.tracking_number)
+    carrier = html.escape(
+        shipment.carrier_name
+        or "Transportadora em detecção"
+    )
+
+    title = STATUS_HEADLINES.get(
+        current_status,
+        STATUS_HEADLINES["unknown"],
+    )
+    detail = STATUS_DETAILS.get(
+        current_status,
+        STATUS_DETAILS["unknown"],
+    )
+
+    origin, destination, eta = extract_route_and_eta(
+        shipment,
+        current_time,
+    )
+
+    top = (
+        "<aside>"
+        f"🔎 <code>{number}</code><br>"
+        f"<i>{name}</i>"
+        "</aside>"
+    )
+
+    rows: list[str] = [
+        (
+            "<tr><td>"
+            f"📦 <b>Transportadora:</b> {carrier}"
+            "</td></tr>"
+        )
+    ]
+
+    if current_time:
+        headline = (
+            f"{_short_datetime(current_time, timezone_name)} | "
+            f"{html.escape(title)}"
+        )
+    else:
+        headline = html.escape(title)
+
+    rows.append(
+        f"<tr><td><b>{headline}</b></td></tr>"
+    )
+    rows.append(
+        f"<tr><td>{html.escape(detail)}</td></tr>"
+    )
+
+    if origin and destination:
+        rows.append(
+            "<tr><td>"
+            f"📍 <b>{html.escape(origin)}</b>"
+            " - Destino: "
+            f"<b>{html.escape(destination)}</b>"
+            "</td></tr>"
+        )
+    elif current_location:
+        rows.append(
+            "<tr><td>"
+            f"📍 <b>{html.escape(str(current_location))}</b>"
+            "</td></tr>"
+        )
+
+    if eta:
+        rows.append(
+            "<tr><td>"
+            "📅 <b>Previsão de entrega:</b> "
+            f"<i>{html.escape(eta)}</i>"
+            "</td></tr>"
+        )
+
+    if warning:
+        rows.append(
+            "<tr><td>"
+            "⚠️ "
+            f"{html.escape(warning)}"
+            "</td></tr>"
+        )
+
+    return top + "<table bordered>" + "".join(rows) + "</table>"
