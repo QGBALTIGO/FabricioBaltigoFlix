@@ -5,6 +5,13 @@ import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+INVALID_TIMESTAMP_FALLBACK = datetime(
+    1970,
+    1,
+    1,
+    tzinfo=timezone.utc,
+)
+
 TRACKING_RE = re.compile(r"^[A-Z0-9][A-Z0-9\-]{4,49}$", re.IGNORECASE)
 SUSPICIOUS_PAYMENT_RE = re.compile(
     r"\b(pix|boleto|taxa|pagamento|pague|cobrança|cobranca|liberação mediante|liberacao mediante)\b",
@@ -44,7 +51,7 @@ def parse_datetime(value) -> datetime:
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
     if not value:
-        return datetime.now(timezone.utc)
+        return INVALID_TIMESTAMP_FALLBACK
 
     text = str(value).strip().replace("Z", "+00:00")
     for candidate in (text, text.replace(" ", "T")):
@@ -54,7 +61,7 @@ def parse_datetime(value) -> datetime:
         except ValueError:
             pass
 
-    return datetime.now(timezone.utc)
+    return INVALID_TIMESTAMP_FALLBACK
 
 
 def parse_datetime_assuming_timezone(
@@ -71,7 +78,7 @@ def parse_datetime_assuming_timezone(
         return value if value.tzinfo else value.replace(tzinfo=tz)
 
     if not value:
-        return datetime.now(timezone.utc)
+        return INVALID_TIMESTAMP_FALLBACK
 
     text = str(value).strip().replace("Z", "+00:00")
     for candidate in (text, text.replace(" ", "T")):
