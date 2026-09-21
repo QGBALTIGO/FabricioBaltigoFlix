@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import logging
+import time
 import math
 
 from sqlalchemy import func, select
@@ -66,6 +67,8 @@ from app.utils import (
 log = logging.getLogger(__name__)
 settings = get_settings()
 
+_channel_member_cache: dict[int, float] = {}
+
 
 def service(context: CallbackContext):
     return context.application.bot_data[
@@ -106,12 +109,45 @@ async def _require_channel_membership(
     if not user:
         return False
 
+    now = time.monotonic()
+    cached_until = _channel_member_cache.get(
+        user.id,
+        0.0,
+    )
+    if cached_until > now:
+        return True
+
+    if len(_channel_member_cache) > 20000:
+        expired = [
+            telegram_id
+            for (
+                telegram_id,
+                expires_at,
+            ) in _channel_member_cache.items()
+            if expires_at <= now
+        ]
+        for telegram_id in expired:
+            _channel_member_cache.pop(
+                telegram_id,
+                None,
+            )
+
     try:
         member = await context.bot.get_chat_member(
             chat_id=settings.required_channel,
             user_id=user.id,
         )
         if _is_channel_member(member):
+            _channel_member_cache[
+                user.id
+            ] = (
+                now
+                + max(
+                    0,
+                    settings
+                    .required_channel_positive_cache_seconds,
+                )
+            )
             return True
     except Exception:
         log.exception(
@@ -1563,7 +1599,7 @@ async def callback(
             try:
                 await service(
                     context
-                ).refresh_shipment(
+                ).refresh_if_stale(
                     session,
                     sub.shipment,
                 )
@@ -1589,9 +1625,10 @@ async def callback(
             try:
                 await service(
                     context
-                ).refresh_shipment(
+                ).refresh_if_stale(
                     session,
                     sub.shipment,
+                    min_age_seconds=0,
                 )
 
                 sub = await service(
@@ -1638,7 +1675,7 @@ async def callback(
                 try:
                     await service(
                         context
-                    ).refresh_shipment(
+                    ).refresh_if_stale(
                         session,
                         sub.shipment,
                     )
