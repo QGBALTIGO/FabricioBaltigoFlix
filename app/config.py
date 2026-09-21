@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     max_active_shipments_per_user: int = 100
     rate_limit_per_minute: int = 20
     http_timeout_seconds: float = 30.0
+    provider_query_timeout_seconds: float = 12.0
 
     list_page_size: int = 10
     stale_after_hours: int = 72
@@ -54,15 +55,15 @@ class Settings(BaseSettings):
     stale_check_interval_minutes: int = 60
 
     tracking_poller_enabled: bool = True
-    monitor_tick_minutes: int = 5
+    monitor_tick_minutes: int = 1
     poll_tracking_days: int = 30
     poll_request_spacing_seconds: float = 0.25
 
-    poll_unknown_minutes: int = 60
-    poll_transit_minutes: int = 30
-    poll_destination_minutes: int = 15
+    poll_unknown_minutes: int = 20
+    poll_transit_minutes: int = 10
+    poll_destination_minutes: int = 5
     poll_out_for_delivery_minutes: int = 5
-    poll_exception_minutes: int = 30
+    poll_exception_minutes: int = 10
 
     support_url: str = ""
 
