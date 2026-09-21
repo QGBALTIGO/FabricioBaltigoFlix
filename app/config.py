@@ -64,7 +64,7 @@ class Settings(BaseSettings):
 
     tracking_poller_enabled: bool = True
     monitor_tick_minutes: int = 1
-    poll_tracking_days: int = 30
+    poll_tracking_days: int = 90
     poll_request_spacing_seconds: float = 0.25
     poll_concurrency: int = 8
     poll_batch_size: int = 500
