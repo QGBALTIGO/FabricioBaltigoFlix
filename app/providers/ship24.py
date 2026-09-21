@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from app.http_client import get_provider_http_client
+
 from app.providers.base import ProviderEvent, ProviderTracking
 from app.status import normalize_status
 from app.utils import parse_datetime
@@ -34,15 +36,16 @@ class Ship24Provider:
         path: str,
         json: Any = None,
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.request(
-                method,
-                f"{self.base_url}{path}",
-                headers=self.headers,
-                json=json,
-            )
-            response.raise_for_status()
-            return response.json()
+        client = await get_provider_http_client()
+        response = await client.request(
+            method,
+            f"{self.base_url}{path}",
+            headers=self.headers,
+            json=json,
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def register(self, tracking_number: str) -> ProviderTracking:
         payload = {"trackingNumber": tracking_number}
