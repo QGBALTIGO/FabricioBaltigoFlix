@@ -58,10 +58,16 @@ class MelhorRastreioProvider:
           from
           to
           location {
+            zipcode
+            address
+            locality
+            number
+            complement
             city
             state
             country
           }
+          additionalInfo
         }
       }
     }

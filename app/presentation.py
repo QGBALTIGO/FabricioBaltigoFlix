@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app.models import Shipment, Subscription, TrackingEvent
+from app.status import status_label
 from app.utils import (
     parse_datetime,
     parse_datetime_assuming_timezone,
@@ -358,3 +359,359 @@ def format_tracking_rich_html(
         )
 
     return top + "<table bordered>" + "".join(rows) + "</table>"
+
+
+
+def _compact_value(value) -> str | None:
+    if value is None:
+        return None
+
+    if isinstance(value, dict):
+        parts = []
+        for key, item in value.items():
+            compact = _compact_value(item)
+            if compact:
+                label = re.sub(
+                    r"([a-z])([A-Z])",
+                    r"\1 \2",
+                    str(key),
+                ).replace("_", " ").strip()
+                parts.append(
+                    f"{label}: {compact}"
+                )
+        return " • ".join(parts) or None
+
+    if isinstance(value, (list, tuple, set)):
+        parts = [
+            compact
+            for item in value
+            if (compact := _compact_value(item))
+        ]
+        return " • ".join(parts) or None
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        str(value),
+    ).strip()
+    return text or None
+
+
+def _detailed_location(raw_event: dict) -> str | None:
+    location = raw_event.get("location") or {}
+    if not isinstance(location, dict):
+        return _compact_value(location)
+
+    address_line = []
+    address = _clean_route(location.get("address"))
+    number = _clean_route(location.get("number"))
+    complement = _clean_route(location.get("complement"))
+
+    if address:
+        address_line.append(address)
+        if number:
+            address_line[-1] += f", {number}"
+    elif number:
+        address_line.append(number)
+
+    if complement:
+        address_line.append(complement)
+
+    locality = _clean_route(location.get("locality"))
+    if locality:
+        address_line.append(locality)
+
+    city = _clean_route(location.get("city"))
+    state = _clean_route(location.get("state"))
+    if city and state:
+        address_line.append(f"{city}/{state}")
+    elif city:
+        address_line.append(city)
+    elif state:
+        address_line.append(state)
+
+    zipcode = _clean_route(location.get("zipcode"))
+    if zipcode:
+        address_line.append(f"CEP {zipcode}")
+
+    country = _clean_route(location.get("country"))
+    if country and country.upper() not in {"BR", "BRA", "BRASIL"}:
+        address_line.append(country)
+
+    # Preserve order while removing duplicates.
+    unique = []
+    for item in address_line:
+        if item and item not in unique:
+            unique.append(item)
+
+    return " • ".join(unique) or None
+
+
+def _history_raw_event(
+    shipment: Shipment,
+    event: TrackingEvent,
+) -> dict:
+    raw = _safe_extra(shipment)
+    return _matching_raw_event(
+        _normalized_raw_events(raw),
+        event.event_at,
+    )
+
+
+def _history_event_html(
+    shipment: Shipment,
+    event: TrackingEvent,
+    timezone_name: str,
+) -> str:
+    raw_event = _history_raw_event(
+        shipment,
+        event,
+    )
+
+    source_time = _short_source_datetime(
+        raw_event.get("createdAt")
+    )
+    if source_time:
+        date_text = source_time
+    else:
+        date_text = _short_datetime(
+            event.event_at,
+            timezone_name,
+        )
+
+    title = (
+        _compact_value(raw_event.get("title"))
+        or status_label(event.status)
+    )
+    description = (
+        _compact_value(raw_event.get("description"))
+        or _compact_value(event.description)
+        or "Movimentação registrada"
+    )
+
+    origin = _clean_route(raw_event.get("from"))
+    destination = _clean_route(raw_event.get("to"))
+    detailed_location = _detailed_location(raw_event)
+
+    tracker_type = _compact_value(
+        raw_event.get("trackerType")
+    )
+    tracker_code = _compact_value(
+        raw_event.get("trackingCode")
+    )
+    additional = _compact_value(
+        raw_event.get("additionalInfo")
+    )
+
+    rows = [
+        (
+            "<tr><td>"
+            f"<b>{html.escape(status_label(event.status))}</b>"
+            "</td></tr>"
+        ),
+        (
+            "<tr><td>"
+            f"<b>{html.escape(date_text)}</b><br>"
+            f"{html.escape(description)}"
+            "</td></tr>"
+        ),
+    ]
+
+    if origin and destination:
+        rows.append(
+            "<tr><td>"
+            "📍 "
+            f"<b>{html.escape(origin)}</b>"
+            " → "
+            f"<b>{html.escape(destination)}</b>"
+            "</td></tr>"
+        )
+    elif event.location:
+        rows.append(
+            "<tr><td>"
+            "📍 "
+            f"<b>{html.escape(str(event.location))}</b>"
+            "</td></tr>"
+        )
+
+    if detailed_location:
+        rows.append(
+            "<tr><td>"
+            "🏢 "
+            f"{html.escape(detailed_location)}"
+            "</td></tr>"
+        )
+
+    source_parts = []
+    if tracker_type:
+        source_parts.append(tracker_type)
+    if (
+        tracker_code
+        and tracker_code != shipment.tracking_number
+    ):
+        source_parts.append(
+            f"Código {tracker_code}"
+        )
+    if source_parts:
+        rows.append(
+            "<tr><td>"
+            "🚚 "
+            f"{html.escape(' • '.join(source_parts))}"
+            "</td></tr>"
+        )
+
+    if additional:
+        rows.append(
+            "<tr><td>"
+            "ℹ️ "
+            f"{html.escape(additional)}"
+            "</td></tr>"
+        )
+
+    return (
+        "<table bordered>"
+        + "".join(rows)
+        + "</table>"
+    )
+
+
+def format_tracking_history_rich_chunks(
+    subscription: Subscription,
+    shipment: Shipment,
+    events: list[TrackingEvent],
+    timezone_name: str,
+    *,
+    events_per_chunk: int = 5,
+) -> list[str]:
+    if not events:
+        return []
+
+    nickname = html.escape(
+        subscription.nickname
+        or shipment.carrier_name
+        or "Minha encomenda"
+    )
+    number = html.escape(
+        shipment.tracking_number
+    )
+    carrier = html.escape(
+        shipment.carrier_name
+        or "Transportadora"
+    )
+
+    chunks: list[str] = []
+    total_chunks = (
+        len(events) + events_per_chunk - 1
+    ) // events_per_chunk
+
+    for index in range(0, len(events), events_per_chunk):
+        page = index // events_per_chunk + 1
+        group = events[
+            index:index + events_per_chunk
+        ]
+
+        page_label = (
+            f" • {page}/{total_chunks}"
+            if total_chunks > 1
+            else ""
+        )
+
+        top = (
+            "<aside>"
+            f"📋 <b>Histórico{page_label}</b><br>"
+            f"🔎 <code>{number}</code><br>"
+            f"<i>{nickname}</i><br>"
+            f"🚚 {carrier}"
+            "</aside>"
+        )
+
+        body = "<br>".join(
+            _history_event_html(
+                shipment,
+                event,
+                timezone_name,
+            )
+            for event in group
+        )
+
+        chunks.append(top + body)
+
+    return chunks
+
+
+def format_tracking_history_fallback(
+    subscription: Subscription,
+    shipment: Shipment,
+    events: list[TrackingEvent],
+    timezone_name: str,
+) -> str:
+    lines = [
+        "📋 <b>Histórico</b>",
+        f"<code>{html.escape(shipment.tracking_number)}</code>",
+        "",
+    ]
+
+    for event in events[:25]:
+        raw_event = _history_raw_event(
+            shipment,
+            event,
+        )
+        source_time = _short_source_datetime(
+            raw_event.get("createdAt")
+        )
+        time_text = (
+            source_time
+            or _short_datetime(
+                event.event_at,
+                timezone_name,
+            )
+        )
+
+        lines.append(
+            f"<b>{html.escape(status_label(event.status))}</b>"
+        )
+        lines.append(
+            f"{html.escape(time_text)} — "
+            f"{html.escape(event.description or 'Movimentação registrada')}"
+        )
+
+        origin = _clean_route(
+            raw_event.get("from")
+        )
+        destination = _clean_route(
+            raw_event.get("to")
+        )
+        if origin and destination:
+            lines.append(
+                "📍 "
+                + html.escape(origin)
+                + " → "
+                + html.escape(destination)
+            )
+        elif event.location:
+            lines.append(
+                "📍 "
+                + html.escape(event.location)
+            )
+
+        detailed = _detailed_location(
+            raw_event
+        )
+        if detailed:
+            lines.append(
+                "🏢 "
+                + html.escape(detailed)
+            )
+
+        additional = _compact_value(
+            raw_event.get("additionalInfo")
+        )
+        if additional:
+            lines.append(
+                "ℹ️ "
+                + html.escape(additional)
+            )
+
+        lines.append("")
+
+    return "\n".join(lines)[:3900]
