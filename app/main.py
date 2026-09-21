@@ -134,8 +134,7 @@ async def lifespan(app: FastAPI):
 
         if (
             settings.stale_monitor_enabled
-            or settings
-            .fallback_poller_enabled
+            or settings.tracking_poller_enabled
         ):
             background_tasks.append(
                 asyncio.create_task(
@@ -178,7 +177,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.1.0",
+    version="1.2.0",
     default_response_class=(
         ORJSONResponse
     ),
@@ -190,38 +189,23 @@ app = FastAPI(
 async def root():
     return {
         "name": settings.app_name,
-        "version": "1.1.0",
+        "version": "1.2.0",
         "status": "online",
         "docs": "/docs",
         "telegram": bool(
             settings.telegram_bot_token
         ),
         "providers": {
-            "17track": bool(
-                settings
-                .seventeen_track_token
-            ),
-            "ship24": bool(
-                settings.ship24_api_key
-            ),
+            "melhor_rastreio": settings.melhor_rastreio_enabled,
+            "direct_fallbacks": settings.direct_fallbacks_enabled,
+            "17track": bool(settings.seventeen_track_token),
+            "ship24": bool(settings.ship24_api_key),
         },
         "monitoring": {
-            "stale_alerts": (
-                settings
-                .stale_monitor_enabled
-            ),
-            "fallback_poller": (
-                settings
-                .fallback_poller_enabled
-            ),
-            "poll_interval_minutes": (
-                settings
-                .poll_interval_minutes
-            ),
-            "poll_tracking_days": (
-                settings
-                .poll_tracking_days
-            ),
+            "stale_alerts": settings.stale_monitor_enabled,
+            "smart_poller": settings.tracking_poller_enabled,
+            "monitor_tick_minutes": settings.monitor_tick_minutes,
+            "poll_tracking_days": settings.poll_tracking_days,
         },
     }
 

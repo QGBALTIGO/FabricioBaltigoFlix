@@ -30,10 +30,7 @@ async def _send_stale_alerts(
                 selectinload(Subscription.user),
                 selectinload(Subscription.shipment),
             )
-            .join(
-                Shipment,
-                Shipment.id == Subscription.shipment_id,
-            )
+            .join(Shipment, Shipment.id == Subscription.shipment_id)
             .where(
                 Subscription.is_active.is_(True),
                 Subscription.notifications_enabled.is_(True),
@@ -45,42 +42,32 @@ async def _send_stale_alerts(
 
         for sub in subs:
             shipment = sub.shipment
-            reference = (
-                shipment.last_event_at
-                or shipment.registered_at
-            )
-            if not is_stale(
-                reference,
-                settings.stale_after_hours,
-            ):
+            reference = shipment.last_event_at or shipment.registered_at
+            if not is_stale(reference, settings.stale_after_hours):
                 continue
 
             key = (
                 shipment.last_event_at.isoformat()
                 if shipment.last_event_at
-                else (
-                    "registered:"
-                    f"{shipment.registered_at.isoformat()}"
-                )
+                else f"registered:{shipment.registered_at.isoformat()}"
             )
             existing = await session.scalar(
                 select(NotificationLog.id).where(
-                    NotificationLog.subscription_id
-                    == sub.id,
+                    NotificationLog.subscription_id == sub.id,
                     NotificationLog.kind == "stale",
-                    NotificationLog.dedupe_key
-                    == key[:255],
+                    NotificationLog.dedupe_key == key[:255],
                 )
             )
             if existing:
                 continue
 
-            log_row = NotificationLog(
-                subscription_id=sub.id,
-                kind="stale",
-                dedupe_key=key[:255],
+            session.add(
+                NotificationLog(
+                    subscription_id=sub.id,
+                    kind="stale",
+                    dedupe_key=key[:255],
+                )
             )
-            session.add(log_row)
             await session.flush()
 
             name = (
@@ -96,8 +83,7 @@ async def _send_stale_alerts(
                 "Isso não significa necessariamente atraso: "
                 "algumas etapas não geram leituras. "
                 "Se o prazo informado pelo remetente já passou, "
-                "consulte a transportadora ou a loja pelos "
-                "canais oficiais."
+                "consulte a transportadora ou a loja pelos canais oficiais."
             )
             try:
                 await bot.send_message(
@@ -111,9 +97,7 @@ async def _send_stale_alerts(
                 sub.notifications_enabled = False
                 await session.commit()
             except TelegramError:
-                log.exception(
-                    "Falha ao enviar alerta de rastreio parado"
-                )
+                log.exception("Falha ao enviar alerta de rastreio parado")
                 await session.rollback()
     return sent
 
@@ -121,30 +105,25 @@ async def _send_stale_alerts(
 async def _poll_shipments(
     bot: Bot,
     tracking_service: TrackingService,
+    settings: Settings,
 ) -> tuple[int, int]:
     checked = 0
     notified = 0
-    async with SessionLocal() as session:
-        shipments = (
-            await tracking_service.active_shipments_for_polling(
-                session
-            )
-        )
 
-    for shipment_stub in shipments:
+    async with SessionLocal() as session:
+        shipments = await tracking_service.active_shipments_for_polling(session)
+        shipment_ids = [shipment.id for shipment in shipments]
+
+    for shipment_id in shipment_ids:
         try:
             async with SessionLocal() as session:
-                shipment = await session.get(
-                    Shipment,
-                    shipment_stub.id,
-                )
+                shipment = await session.get(Shipment, shipment_id)
                 if not shipment or not shipment.is_active:
                     continue
-                _, new_events = (
-                    await tracking_service.refresh_with_events(
-                        session,
-                        shipment,
-                    )
+
+                _, new_events = await tracking_service.refresh_with_events(
+                    session,
+                    shipment,
                 )
                 checked += 1
                 if new_events:
@@ -155,10 +134,11 @@ async def _poll_shipments(
                         new_events,
                     )
         except Exception:
-            log.exception(
-                "Falha no polling do rastreio %s",
-                shipment_stub.tracking_number,
-            )
+            log.exception("Falha no polling do rastreio %s", shipment_id)
+
+        if settings.poll_request_spacing_seconds > 0:
+            await asyncio.sleep(settings.poll_request_spacing_seconds)
+
     return checked, notified
 
 
@@ -168,44 +148,39 @@ async def monitoring_loop(
     settings: Settings,
 ) -> None:
     await asyncio.sleep(10)
-    last_poll = 0.0
     loop = asyncio.get_running_loop()
+    last_stale_check = 0.0
 
     while True:
         now = loop.time()
         try:
-            if settings.stale_monitor_enabled:
-                await _send_stale_alerts(
+            stale_interval = max(
+                10,
+                settings.stale_check_interval_minutes,
+            ) * 60
+
+            if (
+                settings.stale_monitor_enabled
+                and now - last_stale_check >= stale_interval
+            ):
+                await _send_stale_alerts(bot, settings)
+                last_stale_check = now
+
+            if settings.tracking_poller_enabled:
+                checked, notified = await _poll_shipments(
                     bot,
+                    tracking_service,
                     settings,
                 )
-
-            if settings.fallback_poller_enabled:
-                interval = (
-                    max(
-                        15,
-                        settings.poll_interval_minutes,
+                if checked:
+                    log.info(
+                        "Polling: %s encomenda(s), %s notificação(ões).",
+                        checked,
+                        notified,
                     )
-                    * 60
-                )
-                if now - last_poll >= interval:
-                    await _poll_shipments(
-                        bot,
-                        tracking_service,
-                    )
-                    last_poll = now
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.exception(
-                "Falha no monitor de rastreios"
-            )
+            log.exception("Falha no monitor de rastreios")
 
-        sleep_for = (
-            max(
-                10,
-                settings.stale_check_interval_minutes,
-            )
-            * 60
-        )
-        await asyncio.sleep(sleep_for)
+        await asyncio.sleep(max(1, settings.monitor_tick_minutes) * 60)
