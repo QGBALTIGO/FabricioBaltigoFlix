@@ -63,3 +63,41 @@ def test_parse_linked_tracker_result():
     assert parsed.carrier_name == "Jadlog"
     assert len(parsed.events) == 2
     assert parsed.events[-1].status == "delivered"
+
+
+
+def test_melhor_rastreio_naive_time_is_brazil_local():
+    result = {
+        "id": "parcel-time",
+        "lastStatus": "ONROUTE",
+        "trackers": [
+            {
+                "type": "correios",
+                "shippingService": None,
+                "trackingCode": "AP499229999BR",
+            }
+        ],
+        "trackingEvents": [
+            {
+                "createdAt": "2026-09-18 16:40:00",
+                "title": "Objeto em transferência",
+                "description": "Objeto em transferência - por favor aguarde",
+                "from": "01 - BALNEARIO CAMBORIU/SC",
+                "to": "01 - CURITIBA/PR",
+                "location": {
+                    "city": "BALNEARIO CAMBORIU",
+                    "state": "SC",
+                    "country": "BR",
+                },
+            }
+        ],
+    }
+
+    parsed = MelhorRastreioProvider.parse_result(
+        "AP499229999BR",
+        "correios",
+        result,
+    )
+
+    assert parsed.events[0].event_at.hour == 16
+    assert parsed.events[0].event_at.isoformat().endswith("-03:00")

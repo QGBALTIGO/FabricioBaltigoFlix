@@ -244,11 +244,14 @@ class TrackingService:
     def _candidate_providers(self, shipment: Shipment) -> list[Any]:
         candidates: list[Any] = []
 
-        if shipment.provider in self._providers:
-            candidates.append(self._providers[shipment.provider])
-
-        if self.melhor and self.melhor not in candidates:
+        if self.melhor:
             candidates.append(self.melhor)
+
+        if (
+            shipment.provider in self._providers
+            and self._providers[shipment.provider] not in candidates
+        ):
+            candidates.append(self._providers[shipment.provider])
 
         if self.correios and self.correios.can_handle(shipment.tracking_number):
             candidates.append(self.correios)
