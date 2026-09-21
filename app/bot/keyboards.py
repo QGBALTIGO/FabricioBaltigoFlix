@@ -12,6 +12,7 @@ from telegram import (
 from app.models import Subscription
 from app.share import make_share_payload
 
+MAIN_MENU_TODAY = "🏠 Hoje"
 MAIN_MENU_MY_PACKAGES = "📦 Meus pacotes"
 MAIN_MENU_REMOVE_PACKAGE = "🗑 Remover pacote"
 
@@ -20,9 +21,12 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [
+                KeyboardButton(MAIN_MENU_TODAY),
+            ],
+            [
                 KeyboardButton(MAIN_MENU_MY_PACKAGES),
                 KeyboardButton(MAIN_MENU_REMOVE_PACKAGE),
-            ]
+            ],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -56,6 +60,16 @@ def shipment_keyboard(
                 alert_text,
                 callback_data=f"mute:{sub.id}",
             )
+        ],
+        [
+            InlineKeyboardButton(
+                "⚙️ Alertas",
+                callback_data=f"alertmenu:{sub.id}",
+            ),
+            InlineKeyboardButton(
+                "🧭 O que fazer?",
+                callback_data=f"assist:{sub.id}",
+            ),
         ],
     ]
 
