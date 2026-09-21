@@ -886,7 +886,7 @@ async def _show_list(
             )
         elif mode == "remove":
             text = (
-                "🗑 Você não tem pacotes salvos para remover."
+                "🗑 Você não tem encomendas salvas para remover."
             )
         else:
             text = (
@@ -980,7 +980,7 @@ async def _show_list(
             "🎛 <b>Rastreios filtrados</b>"
         ),
         "remove": (
-            "🗑 <b>Remover pacote</b>"
+            "🗑 <b>Remover encomenda</b>"
         ),
     }.get(
         mode,
@@ -1047,7 +1047,7 @@ async def _show_list(
                 text = (
                     f"{title}{suffix}\n\n"
                     f"Você tem {count_text} nesta lista.\n\n"
-                    "Toque em um pacote para abrir os detalhes."
+                    "Selecione uma encomenda para abrir os detalhes."
                 )
 
     markup = list_keyboard(
@@ -1267,6 +1267,11 @@ async def config_cmd(
         settings.stale_after_hours
         // 24,
     )
+    day_word = (
+        "dia"
+        if days == 1
+        else "dias"
+    )
 
     await (
         update.effective_message
@@ -1279,7 +1284,7 @@ async def config_cmd(
                 "Você pode separar saída para entrega, problemas, "
                 "entrega concluída e movimentações intermediárias.\n\n"
                 "⚠️ O bot também pode avisar quando uma encomenda "
-                f"fica {days}+ dia(s) sem movimentação."
+                f"fica {days}+ {day_word} sem movimentação."
             ),
             parse_mode=ParseMode.HTML,
         )
@@ -1599,7 +1604,7 @@ async def callback(
 
             await query.edit_message_text(
                 (
-                    "🗑 <b>Pacote removido.</b>\n"
+                    "🗑 <b>Encomenda removida.</b>\n"
                     "<code>"
                     f"{html.escape(sub.shipment.tracking_number)}"
                     "</code>"
