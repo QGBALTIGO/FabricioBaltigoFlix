@@ -14,6 +14,7 @@ from telegram.constants import ParseMode
 from telegram.ext import CallbackContext
 
 from app.bot.keyboards import (
+    add_package_help_keyboard,
     filters_keyboard,
     history_keyboard,
     list_keyboard,
@@ -193,6 +194,44 @@ def _alert_toggle_toast(enabled: bool) -> str:
     return (
         "🔕 Alertas desativados. "
         "Você não receberá novas atualizações."
+    )
+
+
+
+def _my_packages_text(total: int) -> str:
+    if total == 1:
+        count = "Você está acompanhando <b>1 encomenda</b>."
+    else:
+        count = (
+            "Você está acompanhando "
+            f"<b>{total} encomendas</b>."
+        )
+
+    return (
+        "📦 <b>Meus pacotes</b>\n\n"
+        "<blockquote>"
+        + count
+        + "</blockquote>\n"
+        "Toque em um pacote para ver o status, "
+        "histórico e alertas."
+    )
+
+
+def _add_package_help_text() -> str:
+    return (
+        "➕ <b>Adicionar nova encomenda</b>\n\n"
+        "Envie o <b>código de rastreio</b> "
+        "diretamente no chat.\n\n"
+        "<b>Somente o código:</b>\n"
+        "<code>AB123456789BR</code>\n\n"
+        "<b>Código + nome:</b>\n"
+        "<code>AB123456789BR Teclado gamer</code>\n\n"
+        "<blockquote>"
+        "O nome é opcional e serve apenas para "
+        "você identificar o pacote com mais facilidade."
+        "</blockquote>\n"
+        "Depois de enviar, eu identifico a transportadora "
+        "e começo a acompanhar a encomenda automaticamente. 🚚"
     )
 
 
@@ -771,7 +810,26 @@ async def _show_list(
                 "🗑 Você não tem pacotes salvos para remover."
             )
         else:
-            text = NO_SHIPMENTS
+            text = (
+                "📦 <b>Meus pacotes</b>\n\n"
+                "<blockquote>"
+                "Você ainda não acompanha nenhuma encomenda."
+                "</blockquote>\n"
+                "Adicione seu primeiro código de rastreio para começar."
+            )
+
+        empty_markup = (
+            InlineKeyboardMarkup(
+                [[
+                    InlineKeyboardButton(
+                        "➕ Adicionar encomenda",
+                        callback_data="packages:add",
+                    )
+                ]]
+            )
+            if mode == "active"
+            else None
+        )
 
         if (
             edit
@@ -784,6 +842,7 @@ async def _show_list(
                     parse_mode=(
                         ParseMode.HTML
                     ),
+                    reply_markup=empty_markup,
                 )
             )
         else:
@@ -794,6 +853,7 @@ async def _show_list(
                     parse_mode=(
                         ParseMode.HTML
                     ),
+                    reply_markup=empty_markup,
                 )
             )
         return
@@ -860,12 +920,15 @@ async def _show_list(
             "Toque no pacote que deseja remover."
         )
     else:
-        text = (
-            f"{title}{suffix}\n\n"
-            f"{total} rastreio(s). "
-            "Toque em um pacote para "
-            "abrir os detalhes."
-        )
+        if mode == "active":
+            text = _my_packages_text(total)
+        else:
+            text = (
+                f"{title}{suffix}\n\n"
+                f"{total} rastreio(s). "
+                "Toque em um pacote para "
+                "abrir os detalhes."
+            )
 
     markup = list_keyboard(
         subs,
@@ -1227,6 +1290,26 @@ async def callback(
         await query.message.reply_text(
             SECURITY,
             parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if data == "packages:add":
+        await query.edit_message_text(
+            _add_package_help_text(),
+            parse_mode=ParseMode.HTML,
+            reply_markup=add_package_help_keyboard(),
+        )
+        return
+
+    if data == "packages:back":
+        context.user_data["list_state"] = {
+            "mode": "active"
+        }
+        await _show_list(
+            update,
+            context,
+            page=0,
+            edit=True,
         )
         return
 
