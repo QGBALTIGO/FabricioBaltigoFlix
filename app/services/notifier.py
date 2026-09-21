@@ -56,11 +56,18 @@ async def _send_event(
     sub: Subscription,
     shipment: Shipment,
     event: TrackingEvent,
+    *,
+    telegram_id: int | None = None,
 ) -> None:
+    target_id = (
+        int(telegram_id)
+        if telegram_id is not None
+        else int(sub.user.telegram_id)
+    )
     try:
         await send_rich_message(
             settings.telegram_bot_token,
-            sub.user.telegram_id,
+            target_id,
             format_tracking_notification_rich_html(
                 sub,
                 shipment,
@@ -70,7 +77,7 @@ async def _send_event(
         )
     except TelegramRichMessageError:
         await bot.send_message(
-            chat_id=sub.user.telegram_id,
+            chat_id=target_id,
             text=format_event_notification(
                 sub,
                 shipment,
@@ -310,9 +317,6 @@ async def send_due_deferred_notifications(
 
     sent = 0
     for deferred, sub, user, shipment, event in rows:
-        # Attach the already-loaded user object for the existing formatter path.
-        sub.user = user
-
         if (
             not sub.is_active
             or not sub.notifications_enabled
@@ -339,6 +343,7 @@ async def send_due_deferred_notifications(
                 sub,
                 shipment,
                 event,
+                telegram_id=user.telegram_id,
             )
             await session.delete(deferred)
             sent += 1
