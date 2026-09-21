@@ -21,13 +21,15 @@ class Settings(BaseSettings):
     telegram_mode: str = "polling"
     telegram_webhook_secret: str = ""
     webhook_base_url: str = ""
+    telegram_concurrent_updates: int = 64
+    telegram_update_queue_size: int = 10000
 
     required_channel_enabled: bool = True
     required_channel: str = "@GeekHunter_Br"
     required_channel_url: str = "https://t.me/GeekHunter_Br"
+    required_channel_positive_cache_seconds: int = 600
 
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
-    admin_preview_notifications_on_startup: bool = False
 
     # Primary free tracking source.
     melhor_rastreio_enabled: bool = True
@@ -41,6 +43,9 @@ class Settings(BaseSettings):
     webhook_shared_secret: str = ""
 
     database_url: str = "sqlite+aiosqlite:///./tracker.db"
+    db_pool_size: int = 24
+    db_max_overflow: int = 12
+    db_pool_timeout_seconds: float = 30.0
     public_api_token: str = ""
     share_secret: str = ""
 
@@ -49,6 +54,7 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = 20
     http_timeout_seconds: float = 30.0
     provider_query_timeout_seconds: float = 12.0
+    manual_refresh_min_seconds: int = 60
 
     list_page_size: int = 10
     stale_after_hours: int = 72
@@ -59,12 +65,16 @@ class Settings(BaseSettings):
     monitor_tick_minutes: int = 1
     poll_tracking_days: int = 30
     poll_request_spacing_seconds: float = 0.25
+    poll_concurrency: int = 8
+    poll_batch_size: int = 500
 
     poll_unknown_minutes: int = 20
     poll_transit_minutes: int = 10
     poll_destination_minutes: int = 5
     poll_out_for_delivery_minutes: int = 5
     poll_exception_minutes: int = 10
+
+    notification_send_spacing_seconds: float = 0.04
 
     support_url: str = ""
 
