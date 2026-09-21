@@ -17,6 +17,8 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.intake import (
     TrackingCandidate,
+    barcode_runtime_available,
+    barcode_tracking_candidates_from_image_bytes,
     extract_tracking_candidates,
     ocr_runtime_available,
     ocr_text_from_image_bytes,
@@ -123,7 +125,7 @@ def _candidate_preview_text(
     image: bool = False,
 ) -> str:
     title = (
-        "📸 <b>Encontrei rastreio no print</b>"
+        "📦 <b>Encontrei um rastreio na imagem</b>"
         if image
         else "📨 <b>Encontrei um código de rastreio</b>"
     )
@@ -690,7 +692,10 @@ async def photo_tracking(
     if not await _require_member(update, context):
         return
 
-    caption = str(message.caption or "").strip()
+    caption = str(
+        message.caption
+        or ""
+    ).strip()
     if caption:
         candidates = extract_tracking_candidates(
             caption,
@@ -710,19 +715,37 @@ async def photo_tracking(
             )
             return
 
-    if not settings.image_ocr_enabled or not ocr_runtime_available():
+    barcode_available = (
+        settings.image_barcode_scan_enabled
+        and barcode_runtime_available()
+    )
+    ocr_available = (
+        settings.image_ocr_enabled
+        and ocr_runtime_available()
+    )
+
+    if (
+        not barcode_available
+        and not ocr_available
+    ):
         await message.reply_text(
-            "📸 A leitura de prints está temporariamente indisponível. "
+            "📸 A leitura de etiquetas está temporariamente indisponível. "
             "Envie o código de rastreio como texto."
         )
         return
 
     now = time.monotonic()
-    last = _ocr_last_use.get(user.id, 0.0)
-    cooldown = max(0.0, settings.image_ocr_cooldown_seconds)
+    last = _ocr_last_use.get(
+        user.id,
+        0.0,
+    )
+    cooldown = max(
+        0.0,
+        settings.image_ocr_cooldown_seconds,
+    )
     if now - last < cooldown:
         await message.reply_text(
-            "📸 Aguarde alguns segundos antes de enviar outro print."
+            "📸 Aguarde alguns segundos antes de enviar outra imagem."
         )
         return
     _ocr_last_use[user.id] = now
@@ -733,31 +756,104 @@ async def photo_tracking(
         media = message.photo[-1]
     elif message.document:
         media = message.document
-        filename = str(message.document.file_name or "")
-        suffix = Path(filename).suffix.lower() or ".jpg"
+        filename = str(
+            message.document.file_name
+            or ""
+        )
+        suffix = (
+            Path(filename).suffix.lower()
+            or ".jpg"
+        )
 
     if media is None:
         return
 
-    file_size = int(getattr(media, "file_size", 0) or 0)
-    if file_size and file_size > settings.image_ocr_max_bytes:
+    file_size = int(
+        getattr(
+            media,
+            "file_size",
+            0,
+        )
+        or 0
+    )
+    if (
+        file_size
+        and file_size
+        > settings.image_ocr_max_bytes
+    ):
         await message.reply_text(
-            "📸 Esse arquivo é grande demais para leitura. "
-            "Envie um print de até "
+            "📸 Essa imagem é grande demais para leitura. "
+            "Envie uma imagem de até "
             f"{settings.image_ocr_max_bytes // (1024 * 1024)} MB."
         )
         return
 
     working = await message.reply_text(
-        "📸 Lendo o print e procurando o código…"
+        "📸 Analisando a etiqueta…"
     )
 
     try:
-        tg_file = await context.bot.get_file(media.file_id)
+        tg_file = await context.bot.get_file(
+            media.file_id
+        )
         raw = await tg_file.download_as_bytearray()
-        if len(raw) > settings.image_ocr_max_bytes:
+        raw_bytes = bytes(raw)
+
+        if (
+            len(raw_bytes)
+            > settings.image_ocr_max_bytes
+        ):
             await working.edit_text(
-                "📸 Esse arquivo é grande demais para leitura."
+                "📸 Essa imagem é grande demais para leitura."
+            )
+            return
+
+        barcode_candidates: list[
+            TrackingCandidate
+        ] = []
+
+        if barcode_available:
+            try:
+                async with _ocr_semaphore:
+                    barcode_candidates = (
+                        await asyncio.wait_for(
+                            asyncio.to_thread(
+                                barcode_tracking_candidates_from_image_bytes,
+                                raw_bytes,
+                            ),
+                            timeout=max(
+                                2.0,
+                                settings.image_barcode_timeout_seconds,
+                            ),
+                        )
+                    )
+            except asyncio.TimeoutError:
+                log.warning(
+                    "Scanner de barcode excedeu o tempo; usando OCR."
+                )
+            except Exception:
+                log.exception(
+                    "Falha no scanner de barcode; usando OCR."
+                )
+
+        if barcode_candidates:
+            await working.edit_text(
+                _candidate_preview_text(
+                    barcode_candidates,
+                    image=True,
+                ),
+                parse_mode=ParseMode.HTML,
+                reply_markup=_candidate_markup(
+                    barcode_candidates,
+                    context,
+                ),
+            )
+            return
+
+        if not ocr_available:
+            await working.edit_text(
+                "🔎 Não encontrei um código de rastreio legível na etiqueta. "
+                "Tente aproximar a câmera do código ou envie o código como texto."
             )
             return
 
@@ -765,7 +861,7 @@ async def photo_tracking(
             ocr_text = await asyncio.wait_for(
                 asyncio.to_thread(
                     ocr_text_from_image_bytes,
-                    bytes(raw),
+                    raw_bytes,
                     suffix=suffix,
                 ),
                 timeout=max(
@@ -780,8 +876,8 @@ async def photo_tracking(
         )
         if not candidates:
             await working.edit_text(
-                "🔎 Li o print, mas não encontrei um código de rastreio com segurança. "
-                "Tente recortar a área onde aparece o código ou envie o código como texto."
+                "🔎 Analisei a etiqueta, mas não encontrei um código de rastreio com segurança. "
+                "Tente uma foto mais próxima da etiqueta ou envie o código como texto."
             )
             return
 
@@ -799,13 +895,15 @@ async def photo_tracking(
 
     except asyncio.TimeoutError:
         await working.edit_text(
-            "⏱ O print demorou demais para ser processado. "
-            "Tente um recorte menor da área do código."
+            "⏱ A leitura demorou demais. "
+            "Tente uma foto mais próxima da etiqueta."
         )
     except Exception:
-        log.exception("Falha no OCR do print")
+        log.exception(
+            "Falha ao analisar imagem de rastreio"
+        )
         await working.edit_text(
-            "📸 Não consegui ler esse print agora. "
+            "📸 Não consegui analisar essa imagem agora. "
             "Você pode enviar o código como texto."
         )
 
