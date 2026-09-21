@@ -6,7 +6,7 @@ from telegram.ext import (
     filters,
 )
 
-from app.bot import handlers
+from app.bot import handlers, smart
 
 
 def register_handlers(app: Application) -> None:
@@ -15,6 +15,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("help", handlers.help_cmd))
     app.add_handler(CommandHandler("rastrear", handlers.track_cmd))
     app.add_handler(CommandHandler("meus", handlers.my_shipments))
+    app.add_handler(CommandHandler("hoje", smart.today_cmd))
     app.add_handler(CommandHandler("entregues", handlers.delivered))
     app.add_handler(CommandHandler("relatorio", handlers.report_cmd))
     app.add_handler(CommandHandler("config", handlers.config_cmd))
@@ -26,7 +27,22 @@ def register_handlers(app: Application) -> None:
     app.add_handler(
         CommandHandler("broadcast", handlers.broadcast)
     )
+    app.add_handler(
+        CallbackQueryHandler(
+            smart.smart_callback,
+            pattern=(
+                r"^(?:today:|todaylist:|smartadd:|smartcancel:|"
+                r"alertmenu:|alerttoggle:|quietpreset:|assist:)"
+            ),
+        )
+    )
     app.add_handler(CallbackQueryHandler(handlers.callback))
+    app.add_handler(
+        MessageHandler(
+            filters.PHOTO | filters.Document.IMAGE,
+            smart.photo_tracking,
+        )
+    )
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,

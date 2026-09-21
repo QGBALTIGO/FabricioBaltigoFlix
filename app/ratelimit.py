@@ -33,9 +33,12 @@ class SlidingWindowLimiter:
         self,
         now: float,
     ) -> None:
-        if (
+        elapsed = (
             now - self._last_cleanup
-            < self.window
+        )
+        if (
+            elapsed >= 0
+            and elapsed < self.window
         ):
             return
 

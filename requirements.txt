@@ -12,3 +12,5 @@ python-dotenv==1.1.1
 orjson==3.11.3
 pytest==8.4.2
 pytest-asyncio==1.2.0
+rapidocr==3.9.2
+onnxruntime==1.26.0
