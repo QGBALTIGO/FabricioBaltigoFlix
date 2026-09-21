@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = 20
     http_timeout_seconds: float = 30.0
     provider_query_timeout_seconds: float = 12.0
+    provider_concurrency_per_source: int = 12
     manual_refresh_min_seconds: int = 60
 
     list_page_size: int = 10
