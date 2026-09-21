@@ -1163,32 +1163,101 @@ class TrackingService:
         await session.commit()
         return shipment, notification_events
 
+    @classmethod
+    def _accept_provider_snapshot(
+        cls,
+        shipment: Shipment,
+        data: ProviderTracking,
+    ) -> bool:
+        if not data.events:
+            return shipment.last_event_at is None
+
+        incoming = max(
+            data.events,
+            key=lambda item: (
+                cls._as_utc(item.event_at)
+                or datetime.min.replace(
+                    tzinfo=timezone.utc
+                )
+            ),
+        )
+        incoming_at = cls._as_utc(
+            incoming.event_at
+        )
+        current_at = cls._as_utc(
+            shipment.last_event_at
+        )
+
+        if current_at is None:
+            return True
+
+        if incoming_at is None:
+            return False
+
+        return incoming_at >= current_at
+
     async def _apply_provider_data(
         self,
         session: AsyncSession,
         shipment: Shipment,
         data: ProviderTracking,
     ) -> list[TrackingEvent]:
-        shipment.provider = data.provider or shipment.provider
-        shipment.provider_tracking_id = (
-            data.provider_tracking_id or shipment.provider_tracking_id
-        )
-        shipment.carrier_code = data.carrier_code or shipment.carrier_code
-        shipment.carrier_name = data.carrier_name or shipment.carrier_name
-        shipment.status_raw = data.status_raw or shipment.status_raw
-
-        try:
-            # Text no Postgres não precisa de truncamento. Cortar JSON no
-            # meio gerava payload inválido e fazia rota/ETA desaparecerem.
-            shipment.extra_json = json.dumps(
-                data.raw,
-                ensure_ascii=False,
-                default=str,
+        accept_snapshot = (
+            self._accept_provider_snapshot(
+                shipment,
+                data,
             )
-        except Exception:
-            pass
+        )
 
-        event_rows: list[tuple[Any, str]] = []
+        # Metadados básicos podem preencher lacunas mesmo em backfill,
+        # mas não substituem um snapshot atual por um mais antigo.
+        if not shipment.carrier_code:
+            shipment.carrier_code = (
+                data.carrier_code
+                or shipment.carrier_code
+            )
+        if not shipment.carrier_name:
+            shipment.carrier_name = (
+                data.carrier_name
+                or shipment.carrier_name
+            )
+
+        if accept_snapshot:
+            shipment.provider = (
+                data.provider
+                or shipment.provider
+            )
+            shipment.provider_tracking_id = (
+                data.provider_tracking_id
+                or shipment.provider_tracking_id
+            )
+            shipment.carrier_code = (
+                data.carrier_code
+                or shipment.carrier_code
+            )
+            shipment.carrier_name = (
+                data.carrier_name
+                or shipment.carrier_name
+            )
+            shipment.status_raw = (
+                data.status_raw
+                or shipment.status_raw
+            )
+
+            try:
+                # Mantém JSON válido inteiro para rota, ETA e histórico.
+                shipment.extra_json = json.dumps(
+                    data.raw,
+                    ensure_ascii=False,
+                    default=str,
+                )
+            except Exception:
+                pass
+
+        event_rows: list[
+            tuple[Any, str]
+        ] = []
+
         for ev in data.events:
             event_rows.append(
                 (
@@ -1204,6 +1273,7 @@ class TrackingService:
             )
 
         existing_hashes: set[str] = set()
+
         if event_rows:
             hashes = [
                 item[1]
@@ -1225,7 +1295,9 @@ class TrackingService:
                 ).all()
             )
 
-        new_events: list[TrackingEvent] = []
+        new_events: list[
+            TrackingEvent
+        ] = []
 
         for ev, h in event_rows:
             if h in existing_hashes:
@@ -1243,20 +1315,69 @@ class TrackingService:
             session.add(model)
             new_events.append(model)
 
-        if data.events:
-            latest = max(data.events, key=lambda item: item.event_at)
-            shipment.status = latest.status
-            shipment.status_raw = latest.status_raw or data.status_raw
-            shipment.last_description = latest.description
-            shipment.last_location = latest.location
-            shipment.last_event_at = latest.event_at
-            shipment.is_active = latest.status != "delivered"
-            if latest.status == "delivered":
-                shipment.delivered_at = latest.event_at
-        elif data.status_raw:
-            shipment.status = normalize_status(data.status_raw)
-        elif data.provider and shipment.status == "unknown":
-            shipment.status = "info_received"
+        if data.events and accept_snapshot:
+            latest = max(
+                data.events,
+                key=lambda item: (
+                    self._as_utc(
+                        item.event_at
+                    )
+                    or datetime.min.replace(
+                        tzinfo=timezone.utc
+                    )
+                ),
+            )
+            shipment.status = (
+                latest.status
+            )
+            shipment.status_raw = (
+                latest.status_raw
+                or data.status_raw
+            )
+            shipment.last_description = (
+                latest.description
+            )
+            shipment.last_location = (
+                latest.location
+            )
+            shipment.last_event_at = (
+                latest.event_at
+            )
+            shipment.is_active = (
+                latest.status
+                != "delivered"
+            )
+
+            if (
+                latest.status
+                == "delivered"
+            ):
+                shipment.delivered_at = (
+                    latest.event_at
+                )
+
+        elif (
+            not data.events
+            and data.status_raw
+            and shipment.last_event_at
+            is None
+        ):
+            shipment.status = (
+                normalize_status(
+                    data.status_raw
+                )
+            )
+
+        elif (
+            data.provider
+            and shipment.status
+            == "unknown"
+            and shipment.last_event_at
+            is None
+        ):
+            shipment.status = (
+                "info_received"
+            )
 
         return new_events
 
