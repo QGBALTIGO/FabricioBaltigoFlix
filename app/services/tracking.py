@@ -387,12 +387,14 @@ class TrackingService:
     def _candidate_providers(self, shipment: Shipment) -> list[Any]:
         candidates: list[Any] = []
 
-        if (
+        correios_primary = bool(
             self.rastreador_pacotes
             and self.rastreador_pacotes.can_handle(
                 shipment.tracking_number
             )
-        ):
+        )
+
+        if correios_primary:
             candidates.append(
                 self.rastreador_pacotes
             )
@@ -402,32 +404,75 @@ class TrackingService:
 
         if (
             shipment.provider in self._providers
-            and self._providers[shipment.provider] not in candidates
+            and self._providers[shipment.provider]
+            not in candidates
+            and not (
+                correios_primary
+                and self._providers[shipment.provider]
+                is self.correios
+            )
         ):
-            candidates.append(self._providers[shipment.provider])
+            candidates.append(
+                self._providers[
+                    shipment.provider
+                ]
+            )
 
-        if self.correios and self.correios.can_handle(shipment.tracking_number):
-            candidates.append(self.correios)
+        # O proxy antigo dos Correios fica somente como fallback
+        # quando a fonte fresca + Melhor Rastreio não responderem.
+        if (
+            self.correios
+            and self.correios.can_handle(
+                shipment.tracking_number
+            )
+            and not correios_primary
+        ):
+            candidates.append(
+                self.correios
+            )
 
-        if self.jadlog and self.jadlog.can_handle(shipment.tracking_number):
-            candidates.append(self.jadlog)
+        if (
+            self.jadlog
+            and self.jadlog.can_handle(
+                shipment.tracking_number
+            )
+        ):
+            candidates.append(
+                self.jadlog
+            )
 
         if (
             self.total_express
-            and self.total_express.can_handle(shipment.tracking_number)
+            and self.total_express.can_handle(
+                shipment.tracking_number
+            )
         ):
-            candidates.append(self.total_express)
+            candidates.append(
+                self.total_express
+            )
 
-        for optional in (self.seventeen, self.ship24):
-            if optional and optional not in candidates:
-                candidates.append(optional)
+        for optional in (
+            self.seventeen,
+            self.ship24,
+        ):
+            if (
+                optional
+                and optional not in candidates
+            ):
+                candidates.append(
+                    optional
+                )
 
         deduped: list[Any] = []
         names: set[str] = set()
+
         for provider in candidates:
             if provider.name not in names:
                 names.add(provider.name)
-                deduped.append(provider)
+                deduped.append(
+                    provider
+                )
+
         return deduped
 
     @classmethod
@@ -533,9 +578,32 @@ class TrackingService:
         if not raw_candidates:
             return None
 
+        fallback_provider = None
+
+        if (
+            self.correios
+            and self.correios.can_handle(
+                shipment.tracking_number
+            )
+            and self.correios
+            not in raw_candidates
+        ):
+            fallback_provider = (
+                self.correios
+            )
+
+        health_providers = list(
+            raw_candidates
+        )
+        if fallback_provider:
+            health_providers.append(
+                fallback_provider
+            )
+
         names = [
             provider.name
-            for provider in raw_candidates
+            for provider
+            in health_providers
         ]
 
         rows = list(
@@ -713,6 +781,50 @@ class TrackingService:
                     row,
                     str(error),
                 )
+
+        if (
+            not available
+            and fallback_provider
+        ):
+            row = health_by_name[
+                fallback_provider.name
+            ]
+            until = self._as_utc(
+                row.quarantined_until
+            )
+
+            if not (
+                until
+                and until
+                > datetime.now(
+                    timezone.utc
+                )
+            ):
+                (
+                    provider,
+                    data,
+                    error,
+                    healthy_not_found,
+                ) = await fetch_candidate(
+                    fallback_provider
+                )
+
+                if data is not None:
+                    self._mark_provider_success(
+                        row
+                    )
+                    available.append(
+                        data
+                    )
+                elif healthy_not_found:
+                    self._mark_provider_success(
+                        row
+                    )
+                elif error is not None:
+                    self._mark_provider_failure(
+                        row,
+                        str(error),
+                    )
 
         await session.flush()
 
