@@ -444,6 +444,200 @@ def format_tracking_rich_html(
 
 
 
+def format_tracking_notification_rich_html(
+    subscription: Subscription,
+    shipment: Shipment,
+    event: TrackingEvent,
+    timezone_name: str,
+) -> str:
+    raw = _safe_extra(shipment)
+    matched = _matching_raw_event(
+        _normalized_raw_events(raw),
+        event.event_at,
+    )
+
+    origin = _clean_route(matched.get("from"))
+    destination = _clean_route(matched.get("to"))
+    eta = _format_delivery_date(
+        raw.get("estimatedDelivery")
+    )
+
+    source_time = _short_source_datetime(
+        matched.get("createdAt")
+    )
+    display_time = (
+        source_time
+        or _short_datetime(
+            event.event_at,
+            timezone_name,
+        )
+    )
+
+    description = (
+        _clean_route(matched.get("description"))
+        or _clean_route(event.description)
+        or STATUS_DETAILS.get(
+            event.status,
+            "Movimentação registrada.",
+        )
+    )
+
+    name = html.escape(
+        subscription.nickname
+        or shipment.carrier_name
+        or "Minha encomenda"
+    )
+    number = html.escape(
+        shipment.tracking_number
+    )
+
+    top = (
+        "<aside>"
+        "🔔 <b>Nova atualização</b><br>"
+        f"🔎 <code>{number}</code><br>"
+        f"<i>{name}</i>"
+        "</aside>"
+    )
+
+    rows = [
+        (
+            "<tr><td>"
+            f"<b>{html.escape(status_label(event.status))}</b><br>"
+            f"<i>{html.escape(display_time)}</i>"
+            "</td></tr>"
+        ),
+        (
+            "<tr><td>"
+            f"{html.escape(description)}"
+            "</td></tr>"
+        ),
+    ]
+
+    if origin and destination:
+        rows.append(
+            "<tr><td>"
+            "📍 "
+            f"<b>{html.escape(origin)}</b>"
+            " → "
+            f"<b>{html.escape(destination)}</b>"
+            "</td></tr>"
+        )
+    elif event.location:
+        rows.append(
+            "<tr><td>"
+            "📍 "
+            f"<b>{html.escape(str(event.location))}</b>"
+            "</td></tr>"
+        )
+
+    if (
+        eta
+        and event.status != "delivered"
+    ):
+        rows.append(
+            "<tr><td>"
+            "📅 <b>Previsão de entrega:</b> "
+            f"<i>{html.escape(eta)}</i>"
+            "</td></tr>"
+        )
+
+    if event.status == "delivered":
+        rows.append(
+            "<tr><td>"
+            "🎉 <b>Entrega concluída com sucesso.</b>"
+            "</td></tr>"
+        )
+
+    return (
+        top
+        + "<table bordered>"
+        + "".join(rows)
+        + "</table>"
+    )
+
+
+def format_tracking_notification_fallback(
+    subscription: Subscription,
+    shipment: Shipment,
+    event: TrackingEvent,
+    timezone_name: str,
+) -> str:
+    raw = _safe_extra(shipment)
+    matched = _matching_raw_event(
+        _normalized_raw_events(raw),
+        event.event_at,
+    )
+
+    origin = _clean_route(matched.get("from"))
+    destination = _clean_route(matched.get("to"))
+    eta = _format_delivery_date(
+        raw.get("estimatedDelivery")
+    )
+    source_time = _short_source_datetime(
+        matched.get("createdAt")
+    )
+    display_time = (
+        source_time
+        or _short_datetime(
+            event.event_at,
+            timezone_name,
+        )
+    )
+    description = (
+        _clean_route(matched.get("description"))
+        or _clean_route(event.description)
+        or "Movimentação registrada."
+    )
+
+    lines = [
+        "🔔 <b>Nova atualização</b>",
+        f"🔎 <code>{html.escape(shipment.tracking_number)}</code>",
+        f"<i>{html.escape(subscription.nickname or shipment.carrier_name or 'Minha encomenda')}</i>",
+        "",
+        f"<b>{html.escape(status_label(event.status))}</b>",
+        f"<i>{html.escape(display_time)}</i>",
+        "",
+        html.escape(description),
+    ]
+
+    if origin and destination:
+        lines.extend([
+            "",
+            (
+                "📍 <b>"
+                + html.escape(origin)
+                + " → "
+                + html.escape(destination)
+                + "</b>"
+            ),
+        ])
+    elif event.location:
+        lines.extend([
+            "",
+            f"📍 <b>{html.escape(str(event.location))}</b>",
+        ])
+
+    if (
+        eta
+        and event.status != "delivered"
+    ):
+        lines.extend([
+            "",
+            (
+                "📅 <b>Previsão de entrega:</b> "
+                f"<i>{html.escape(eta)}</i>"
+            ),
+        ])
+
+    if event.status == "delivered":
+        lines.extend([
+            "",
+            "🎉 <b>Entrega concluída com sucesso.</b>",
+        ])
+
+    return "\n".join(lines)
+
+
 def _compact_value(value) -> str | None:
     if value is None:
         return None
