@@ -43,8 +43,8 @@ class Settings(BaseSettings):
     webhook_shared_secret: str = ""
 
     database_url: str = "sqlite+aiosqlite:///./tracker.db"
-    db_pool_size: int = 24
-    db_max_overflow: int = 12
+    db_pool_size: int = 15
+    db_max_overflow: int = 5
     db_pool_timeout_seconds: float = 30.0
     public_api_token: str = ""
     share_secret: str = ""
