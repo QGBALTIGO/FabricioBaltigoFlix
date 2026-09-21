@@ -67,6 +67,35 @@ async def init_db() -> None:
             Base.metadata.create_all
         )
 
+        # Sem Alembic neste projeto, garante índices novos também
+        # em bancos que já possuem as tabelas.
+        for statement in (
+            (
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_shipment_poll_active_registered "
+                "ON shipments (is_active, status, registered_at)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_shipment_last_event_at "
+                "ON shipments (last_event_at)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_subscription_shipment_notify "
+                "ON subscriptions "
+                "(shipment_id, is_active, notifications_enabled)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_polling_next_check "
+                "ON polling_states (next_check_at)"
+            ),
+        ):
+            await conn.exec_driver_sql(
+                statement
+            )
+
 
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with SessionLocal() as session:
