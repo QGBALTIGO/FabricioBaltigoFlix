@@ -91,6 +91,19 @@ async def init_db() -> None:
                 "ix_polling_next_check "
                 "ON polling_states (next_check_at)"
             ),
+            # Horários silenciosos foram removidos da experiência. Desativa
+            # qualquer preferência antiga e libera alertas que ainda estejam
+            # aguardando uma janela de silêncio de versões anteriores.
+            (
+                "UPDATE user_preferences "
+                "SET quiet_hours_enabled = FALSE "
+                "WHERE quiet_hours_enabled = TRUE"
+            ),
+            (
+                "UPDATE deferred_notifications "
+                "SET deliver_after = CURRENT_TIMESTAMP "
+                "WHERE deliver_after > CURRENT_TIMESTAMP"
+            ),
         ):
             await conn.exec_driver_sql(
                 statement
