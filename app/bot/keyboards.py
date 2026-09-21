@@ -35,45 +35,25 @@ def shipment_keyboard(
     bot_username: str | None = None,
     share_secret: str = "",
 ) -> InlineKeyboardMarkup:
-    mute_text = (
-        "🔔 Ativar alertas"
-        if not sub.notifications_enabled
-        else "🔕 Silenciar"
+    alert_text = (
+        "🔔 Ativar alerta"
+        if (
+            not sub.notifications_enabled
+            or sub.notify_level == "off"
+        )
+        else "🔕 Desativar alerta"
     )
+
     rows = [
         [
             InlineKeyboardButton(
-                "🔄 Atualizar",
-                callback_data=f"refresh:{sub.id}",
-            ),
-            InlineKeyboardButton(
                 "📋 Histórico",
                 callback_data=f"history:{sub.id}",
-            ),
+            )
         ],
         [
             InlineKeyboardButton(
-                "ℹ️ Entender status",
-                callback_data=f"explain:{sub.id}",
-            ),
-            InlineKeyboardButton(
-                "🛡 Segurança",
-                callback_data="security",
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "✏️ Renomear",
-                callback_data=f"rename:{sub.id}",
-            ),
-            InlineKeyboardButton(
-                "⚙️ Alertas",
-                callback_data=f"alerts:{sub.id}",
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                mute_text,
+                alert_text,
                 callback_data=f"mute:{sub.id}",
             )
         ],
@@ -94,7 +74,7 @@ def shipment_keyboard(
                 + quote(deep_link, safe="")
                 + "&text="
                 + quote(
-                    "📦 Acompanhe esta encomenda comigo no Rastreio Baltigo",
+                    "📦 Acompanhe esta encomenda comigo no Melhor Rastreio",
                     safe="",
                 )
             )
@@ -107,14 +87,6 @@ def shipment_keyboard(
                 ]
             )
 
-    rows.append(
-        [
-            InlineKeyboardButton(
-                "🗑 Parar de acompanhar",
-                callback_data=f"delete:{sub.id}",
-            )
-        ]
-    )
     return InlineKeyboardMarkup(rows)
 
 
