@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from app.http_client import get_provider_http_client
+
 from app.providers.base import (
     ProviderEvent,
     ProviderNotFound,
@@ -47,19 +49,20 @@ class TotalExpressDirectProvider:
             raise ProviderNotFound("Formato não compatível com Total Express.")
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(
-                    self.endpoint,
-                    params={"awb": number, "language": "pt"},
-                    headers={
+            client = await get_provider_http_client()
+            response = await client.get(
+                self.endpoint,
+                params={"awb": number, "language": "pt"},
+                timeout=self.timeout,
+                headers={
                         "User-Agent": "Mozilla/5.0",
                         "Accept": "application/json, text/plain, */*",
                         "Referer": (
                             "https://totalconecta.totalexpress.com.br/"
                             "mfe-rastreio/"
                         ),
-                    },
-                )
+                },
+            )
             response.raise_for_status()
             data = response.json()
         except (httpx.HTTPError, ValueError) as exc:

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -45,6 +47,15 @@ class AddResult:
 class TrackingService:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self._tracking_locks: weakref.WeakValueDictionary[
+            str,
+            asyncio.Lock,
+        ] = weakref.WeakValueDictionary()
+        self._refresh_locks: weakref.WeakValueDictionary[
+            int,
+            asyncio.Lock,
+        ] = weakref.WeakValueDictionary()
+        self._provider_semaphores: dict[str, asyncio.Semaphore] = {}
 
         self.melhor = (
             MelhorRastreioProvider(settings.http_timeout_seconds)
@@ -128,9 +139,27 @@ class TrackingService:
             username=username,
             first_name=first_name,
         )
-        session.add(user)
-        await session.flush()
-        return user
+
+        try:
+            async with session.begin_nested():
+                session.add(user)
+                await session.flush()
+            return user
+        except IntegrityError:
+            # Outra requisição/réplica criou o mesmo usuário.
+            existing = await session.scalar(
+                select(User).where(
+                    User.telegram_id
+                    == telegram_id
+                )
+            )
+            if existing is None:
+                raise
+            existing.username = username
+            existing.first_name = (
+                first_name
+            )
+            return existing
 
     async def _check_user_limit(
         self,
@@ -156,6 +185,29 @@ class TrackingService:
         tracking_number: str,
         nickname: str | None = None,
     ) -> AddResult:
+        number = normalize_tracking_number(
+            tracking_number
+        )
+        lock = self._tracking_locks.setdefault(
+            number,
+            asyncio.Lock(),
+        )
+
+        async with lock:
+            return await self._add_tracking_unlocked(
+                session,
+                user,
+                number,
+                nickname=nickname,
+            )
+
+    async def _add_tracking_unlocked(
+        self,
+        session: AsyncSession,
+        user: User,
+        tracking_number: str,
+        nickname: str | None = None,
+    ) -> AddResult:
         number = normalize_tracking_number(tracking_number)
         shipment = await session.scalar(
             select(Shipment).where(Shipment.tracking_number == number)
@@ -164,27 +216,67 @@ class TrackingService:
         warning = None
 
         if shipment is None:
-            await self._check_user_limit(session, user.id)
-            shipment = Shipment(tracking_number=number)
-            session.add(shipment)
-            await session.flush()
+            await self._check_user_limit(
+                session,
+                user.id,
+            )
+            shipment = Shipment(
+                tracking_number=number
+            )
 
-            provider_data = await self._query_best_provider(session, shipment)
-            if provider_data:
-                await self._apply_provider_data(session, shipment, provider_data)
-            else:
-                warning = (
-                    "Código salvo. Ainda não encontrei movimentações nas fontes "
-                    "disponíveis; vou continuar verificando automaticamente."
+            try:
+                async with session.begin_nested():
+                    session.add(
+                        shipment
+                    )
+                    await session.flush()
+            except IntegrityError:
+                # Outra requisição/réplica venceu a corrida.
+                shipment = await session.scalar(
+                    select(Shipment).where(
+                        Shipment.tracking_number
+                        == number
+                    )
                 )
-            await self._schedule_next_poll(session, shipment)
+                if shipment is None:
+                    raise
+                created = False
+
+            if created:
+                provider_data = (
+                    await self._query_best_provider(
+                        session,
+                        shipment,
+                    )
+                )
+                if provider_data:
+                    await self._apply_provider_data(
+                        session,
+                        shipment,
+                        provider_data,
+                    )
+                else:
+                    warning = (
+                        "Código salvo. Ainda não encontrei movimentações "
+                        "nas fontes disponíveis; vou continuar verificando "
+                        "automaticamente."
+                    )
+                await self._schedule_next_poll(
+                    session,
+                    shipment,
+                )
+            else:
+                await self.refresh_if_stale(
+                    session,
+                    shipment,
+                )
         else:
-            # Reenviar um código também funciona como consulta manual:
-            # busca dados frescos antes de responder ao usuário.
-            provider_data = await self._query_best_provider(session, shipment)
-            if provider_data:
-                await self._apply_provider_data(session, shipment, provider_data)
-                await self._schedule_next_poll(session, shipment)
+            # Reutiliza uma consulta recente para evitar tempestade de
+            # requests quando vários usuários abrem/adicionam o mesmo código.
+            await self.refresh_if_stale(
+                session,
+                shipment,
+            )
 
         subscription = await session.scalar(
             select(Subscription)
@@ -196,22 +288,60 @@ class TrackingService:
         )
 
         if subscription is None:
-            await self._check_user_limit(session, user.id)
-            subscription = Subscription(
+            await self._check_user_limit(
+                session,
+                user.id,
+            )
+            candidate = Subscription(
                 user_id=user.id,
                 shipment_id=shipment.id,
                 nickname=nickname,
-                notify_level=self.settings.default_notify_level,
+                notify_level=(
+                    self.settings
+                    .default_notify_level
+                ),
             )
-            session.add(subscription)
+
+            try:
+                async with session.begin_nested():
+                    session.add(
+                        candidate
+                    )
+                    await session.flush()
+                subscription = candidate
+            except IntegrityError:
+                # A mesma assinatura já foi criada em outra réplica.
+                subscription = await session.scalar(
+                    select(Subscription)
+                    .options(
+                        selectinload(
+                            Subscription.shipment
+                        )
+                    )
+                    .where(
+                        Subscription.user_id
+                        == user.id,
+                        Subscription.shipment_id
+                        == shipment.id,
+                    )
+                )
+                if subscription is None:
+                    raise
         else:
             subscription.is_active = True
             if nickname:
                 subscription.nickname = nickname
 
+        subscription.is_active = True
+        if nickname:
+            subscription.nickname = nickname
+
         await session.commit()
+
         subscription = await self.get_subscription(
-            session, user.id, subscription.id
+            session,
+            user.id,
+            subscription.id,
         )
         return AddResult(
             subscription=subscription,
@@ -257,12 +387,14 @@ class TrackingService:
     def _candidate_providers(self, shipment: Shipment) -> list[Any]:
         candidates: list[Any] = []
 
-        if (
+        correios_primary = bool(
             self.rastreador_pacotes
             and self.rastreador_pacotes.can_handle(
                 shipment.tracking_number
             )
-        ):
+        )
+
+        if correios_primary:
             candidates.append(
                 self.rastreador_pacotes
             )
@@ -272,32 +404,75 @@ class TrackingService:
 
         if (
             shipment.provider in self._providers
-            and self._providers[shipment.provider] not in candidates
+            and self._providers[shipment.provider]
+            not in candidates
+            and not (
+                correios_primary
+                and self._providers[shipment.provider]
+                is self.correios
+            )
         ):
-            candidates.append(self._providers[shipment.provider])
+            candidates.append(
+                self._providers[
+                    shipment.provider
+                ]
+            )
 
-        if self.correios and self.correios.can_handle(shipment.tracking_number):
-            candidates.append(self.correios)
+        # O proxy antigo dos Correios fica somente como fallback
+        # quando a fonte fresca + Melhor Rastreio não responderem.
+        if (
+            self.correios
+            and self.correios.can_handle(
+                shipment.tracking_number
+            )
+            and not correios_primary
+        ):
+            candidates.append(
+                self.correios
+            )
 
-        if self.jadlog and self.jadlog.can_handle(shipment.tracking_number):
-            candidates.append(self.jadlog)
+        if (
+            self.jadlog
+            and self.jadlog.can_handle(
+                shipment.tracking_number
+            )
+        ):
+            candidates.append(
+                self.jadlog
+            )
 
         if (
             self.total_express
-            and self.total_express.can_handle(shipment.tracking_number)
+            and self.total_express.can_handle(
+                shipment.tracking_number
+            )
         ):
-            candidates.append(self.total_express)
+            candidates.append(
+                self.total_express
+            )
 
-        for optional in (self.seventeen, self.ship24):
-            if optional and optional not in candidates:
-                candidates.append(optional)
+        for optional in (
+            self.seventeen,
+            self.ship24,
+        ):
+            if (
+                optional
+                and optional not in candidates
+            ):
+                candidates.append(
+                    optional
+                )
 
         deduped: list[Any] = []
         names: set[str] = set()
+
         for provider in candidates:
             if provider.name not in names:
                 names.add(provider.name)
-                deduped.append(provider)
+                deduped.append(
+                    provider
+                )
+
         return deduped
 
     @classmethod
@@ -340,22 +515,152 @@ class TrackingService:
             direct_bonus,
         )
 
+    @staticmethod
+    def _mark_provider_success(
+        row: ProviderHealth,
+    ) -> None:
+        row.consecutive_failures = 0
+        row.quarantined_until = None
+        row.last_success_at = (
+            datetime.now(timezone.utc)
+        )
+        row.last_error = None
+
+    @staticmethod
+    def _mark_provider_failure(
+        row: ProviderHealth,
+        error: str,
+    ) -> None:
+        row.consecutive_failures += 1
+        row.last_failure_at = (
+            datetime.now(timezone.utc)
+        )
+        row.last_error = (
+            error
+            or "erro desconhecido"
+        )[:500]
+
+        failures = (
+            row.consecutive_failures
+        )
+        quarantine = None
+
+        if failures >= 12:
+            quarantine = timedelta(
+                hours=24
+            )
+        elif failures >= 6:
+            quarantine = timedelta(
+                hours=6
+            )
+        elif failures >= 3:
+            quarantine = timedelta(
+                hours=1
+            )
+
+        if quarantine:
+            row.quarantined_until = (
+                datetime.now(timezone.utc)
+                + quarantine
+            )
+
     async def _query_best_provider(
         self,
         session: AsyncSession,
         shipment: Shipment,
     ) -> ProviderTracking | None:
+        raw_candidates = (
+            self._candidate_providers(
+                shipment
+            )
+        )
+
+        if not raw_candidates:
+            return None
+
+        fallback_provider = None
+
+        if (
+            self.correios
+            and self.correios.can_handle(
+                shipment.tracking_number
+            )
+            and self.correios
+            not in raw_candidates
+        ):
+            fallback_provider = (
+                self.correios
+            )
+
+        health_providers = list(
+            raw_candidates
+        )
+        if fallback_provider:
+            health_providers.append(
+                fallback_provider
+            )
+
+        names = [
+            provider.name
+            for provider
+            in health_providers
+        ]
+
+        rows = list(
+            (
+                await session.scalars(
+                    select(
+                        ProviderHealth
+                    ).where(
+                        ProviderHealth.provider
+                        .in_(names)
+                    )
+                )
+            ).all()
+        )
+
+        health_by_name = {
+            row.provider: row
+            for row in rows
+        }
+
+        for name in names:
+            if name not in health_by_name:
+                row = ProviderHealth(
+                    provider=name
+                )
+                session.add(row)
+                health_by_name[
+                    name
+                ] = row
+
+        await session.flush()
+
+        now = datetime.now(
+            timezone.utc
+        )
         candidates: list[Any] = []
 
-        for provider in self._candidate_providers(
-            shipment
-        ):
-            if await self._provider_quarantined(
-                session,
-                provider.name,
+        for provider in raw_candidates:
+            row = health_by_name[
+                provider.name
+            ]
+            until = self._as_utc(
+                row.quarantined_until
+            )
+
+            if (
+                until
+                and until > now
             ):
                 continue
-            candidates.append(provider)
+
+            candidates.append(
+                provider
+            )
+
+        # Libera a conexão do Postgres enquanto esperamos I/O externo.
+        await session.commit()
 
         if not candidates:
             return None
@@ -372,13 +677,29 @@ class TrackingService:
             provider: Any,
         ):
             try:
-                data = await asyncio.wait_for(
-                    self._query_provider(
-                        provider,
-                        shipment,
-                    ),
-                    timeout=timeout,
+                semaphore = (
+                    self._provider_semaphores
+                    .setdefault(
+                        provider.name,
+                        asyncio.Semaphore(
+                            max(
+                                1,
+                                self.settings
+                                .provider_concurrency_per_source,
+                            )
+                        ),
+                    )
                 )
+
+                async with semaphore:
+                    data = await asyncio.wait_for(
+                        self._query_provider(
+                            provider,
+                            shipment,
+                        ),
+                        timeout=timeout,
+                    )
+
                 return (
                     provider,
                     data,
@@ -418,12 +739,17 @@ class TrackingService:
 
         results = await asyncio.gather(
             *(
-                fetch_candidate(provider)
-                for provider in candidates
+                fetch_candidate(
+                    provider
+                )
+                for provider
+                in candidates
             )
         )
 
-        available: list[ProviderTracking] = []
+        available: list[
+            ProviderTracking
+        ] = []
 
         for (
             provider,
@@ -431,29 +757,76 @@ class TrackingService:
             error,
             healthy_not_found,
         ) in results:
+            row = health_by_name[
+                provider.name
+            ]
+
             if data is not None:
-                await self._record_provider_success(
-                    session,
-                    provider.name,
+                self._mark_provider_success(
+                    row
                 )
-                available.append(data)
+                available.append(
+                    data
+                )
                 continue
 
             if healthy_not_found:
-                # The source answered normally; it simply does
-                # not know this code. This is not a provider failure.
-                await self._record_provider_success(
-                    session,
-                    provider.name,
+                self._mark_provider_success(
+                    row
                 )
                 continue
 
             if error is not None:
-                await self._record_provider_failure(
-                    session,
-                    provider.name,
+                self._mark_provider_failure(
+                    row,
                     str(error),
                 )
+
+        if (
+            not available
+            and fallback_provider
+        ):
+            row = health_by_name[
+                fallback_provider.name
+            ]
+            until = self._as_utc(
+                row.quarantined_until
+            )
+
+            if not (
+                until
+                and until
+                > datetime.now(
+                    timezone.utc
+                )
+            ):
+                (
+                    provider,
+                    data,
+                    error,
+                    healthy_not_found,
+                ) = await fetch_candidate(
+                    fallback_provider
+                )
+
+                if data is not None:
+                    self._mark_provider_success(
+                        row
+                    )
+                    available.append(
+                        data
+                    )
+                elif healthy_not_found:
+                    self._mark_provider_success(
+                        row
+                    )
+                elif error is not None:
+                    self._mark_provider_failure(
+                        row,
+                        str(error),
+                    )
+
+        await session.flush()
 
         if not available:
             return None
@@ -465,8 +838,13 @@ class TrackingService:
 
         # Preserve ETA from another healthy source when the
         # freshest Correios feed does not provide one.
-        if isinstance(best.raw, dict):
-            if not best.raw.get("estimatedDelivery"):
+        if isinstance(
+            best.raw,
+            dict,
+        ):
+            if not best.raw.get(
+                "estimatedDelivery"
+            ):
                 for candidate in available:
                     raw = (
                         candidate.raw
@@ -637,6 +1015,64 @@ class TrackingService:
             row.quarantined_until = datetime.now(timezone.utc) + quarantine
         await session.flush()
 
+    async def refresh_if_stale(
+        self,
+        session: AsyncSession,
+        shipment: Shipment,
+        *,
+        min_age_seconds: int | None = None,
+    ) -> ProviderTracking | None:
+        if shipment.id is None:
+            return await self.refresh_shipment(
+                session,
+                shipment,
+            )
+
+        lock = self._refresh_locks.setdefault(
+            shipment.id,
+            asyncio.Lock(),
+        )
+
+        async with lock:
+            state = await session.scalar(
+                select(PollingState).where(
+                    PollingState.shipment_id
+                    == shipment.id
+                )
+            )
+
+            minimum_age = max(
+                0,
+                (
+                    self.settings.manual_refresh_min_seconds
+                    if min_age_seconds is None
+                    else min_age_seconds
+                ),
+            )
+
+            if (
+                state
+                and state.last_checked_at
+                and minimum_age > 0
+            ):
+                last_checked = self._as_utc(
+                    state.last_checked_at
+                )
+                if (
+                    last_checked
+                    and (
+                        datetime.now(timezone.utc)
+                        - last_checked
+                    ).total_seconds()
+                    < minimum_age
+                ):
+                    return None
+
+            return await self.refresh_shipment(
+                session,
+                shipment,
+            )
+
     async def refresh_shipment(
         self,
         session: AsyncSession,
@@ -742,31 +1178,57 @@ class TrackingService:
         shipment.status_raw = data.status_raw or shipment.status_raw
 
         try:
+            # Text no Postgres não precisa de truncamento. Cortar JSON no
+            # meio gerava payload inválido e fazia rota/ETA desaparecerem.
             shipment.extra_json = json.dumps(
                 data.raw,
                 ensure_ascii=False,
                 default=str,
-            )[:20000]
+            )
         except Exception:
             pass
 
-        new_events: list[TrackingEvent] = []
-
+        event_rows: list[tuple[Any, str]] = []
         for ev in data.events:
-            h = event_hash(
-                shipment.tracking_number,
-                ev.status,
-                ev.description,
-                ev.location,
-                ev.event_at,
-            )
-            exists = await session.scalar(
-                select(TrackingEvent.id).where(
-                    TrackingEvent.shipment_id == shipment.id,
-                    TrackingEvent.event_hash == h,
+            event_rows.append(
+                (
+                    ev,
+                    event_hash(
+                        shipment.tracking_number,
+                        ev.status,
+                        ev.description,
+                        ev.location,
+                        ev.event_at,
+                    ),
                 )
             )
-            if exists:
+
+        existing_hashes: set[str] = set()
+        if event_rows:
+            hashes = [
+                item[1]
+                for item in event_rows
+            ]
+            existing_hashes = set(
+                (
+                    await session.scalars(
+                        select(
+                            TrackingEvent.event_hash
+                        ).where(
+                            TrackingEvent.shipment_id
+                            == shipment.id,
+                            TrackingEvent.event_hash.in_(
+                                hashes
+                            ),
+                        )
+                    )
+                ).all()
+            )
+
+        new_events: list[TrackingEvent] = []
+
+        for ev, h in event_rows:
+            if h in existing_hashes:
                 continue
 
             model = TrackingEvent(
@@ -1008,6 +1470,11 @@ class TrackingService:
                 ),
             )
             .order_by(Shipment.last_event_at.asc().nullsfirst())
-            .limit(500)
+            .limit(
+                max(
+                    50,
+                    self.settings.poll_batch_size,
+                )
+            )
         )
         return list((await session.scalars(stmt)).all())

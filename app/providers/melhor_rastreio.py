@@ -5,6 +5,8 @@ from typing import Any
 
 import httpx
 
+from app.http_client import get_provider_http_client
+
 from app.providers.base import (
     ProviderEvent,
     ProviderNotFound,
@@ -102,11 +104,12 @@ class MelhorRastreioProvider:
 
             for endpoint in self.endpoints:
                 try:
-                    async with httpx.AsyncClient(timeout=self.timeout) as client:
-                        response = await client.post(
-                            endpoint,
-                            json=payload,
-                            headers={
+                    client = await get_provider_http_client()
+                    response = await client.post(
+                        endpoint,
+                        json=payload,
+                        timeout=self.timeout,
+                        headers={
                                 "Content-Type": "application/json",
                                 "Accept": "application/json",
                                 "User-Agent": (
@@ -114,8 +117,8 @@ class MelhorRastreioProvider:
                                 ),
                                 "Origin": "https://melhorrastreio.com.br",
                                 "Referer": "https://melhorrastreio.com.br/",
-                            },
-                        )
+                        },
+                    )
                     response.raise_for_status()
                     body = response.json()
                 except (httpx.HTTPError, ValueError) as exc:

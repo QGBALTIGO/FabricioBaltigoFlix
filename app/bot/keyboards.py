@@ -154,37 +154,6 @@ def add_package_help_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def notify_keyboard(
-    sub: Subscription,
-) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "⭐ Importantes",
-                    callback_data=(
-                        f"notify:{sub.id}:important"
-                    ),
-                ),
-                InlineKeyboardButton(
-                    "🔔 Todos",
-                    callback_data=(
-                        f"notify:{sub.id}:all"
-                    ),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔕 Sem alertas",
-                    callback_data=(
-                        f"notify:{sub.id}:off"
-                    ),
-                )
-            ],
-        ]
-    )
-
-
 def list_keyboard(
     subs: list[Subscription],
     page: int,
@@ -270,58 +239,3 @@ def list_keyboard(
         )
 
     return InlineKeyboardMarkup(rows)
-
-
-def filters_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "🚚 Em trânsito",
-                    callback_data=(
-                        "filterstatus:in_transit"
-                    ),
-                ),
-                InlineKeyboardButton(
-                    "🛵 Saiu p/ entrega",
-                    callback_data=(
-                        "filterstatus:out_for_delivery"
-                    ),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "⚠️ Problemas",
-                    callback_data=(
-                        "filterstatus:exception"
-                    ),
-                ),
-                InlineKeyboardButton(
-                    "🛃 Alfândega",
-                    callback_data=(
-                        "filterstatus:customs"
-                    ),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "✅ Entregues",
-                    callback_data=(
-                        "filterstatus:delivered"
-                    ),
-                ),
-                InlineKeyboardButton(
-                    "🚚 Por transportadora",
-                    callback_data=(
-                        "filters:carriers"
-                    ),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "🧹 Limpar filtros",
-                    callback_data="filters:clear",
-                )
-            ],
-        ]
-    )

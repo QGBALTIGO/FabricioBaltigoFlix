@@ -20,9 +20,38 @@ def normalize_async_database_url(url: str) -> str:
     return url
 
 
+database_url = normalize_async_database_url(
+    settings.database_url
+)
+
+engine_kwargs = {
+    "pool_pre_ping": True,
+}
+
+if database_url.startswith(
+    "postgresql+asyncpg://"
+):
+    engine_kwargs.update(
+        {
+            "pool_size": max(
+                5,
+                settings.db_pool_size,
+            ),
+            "max_overflow": max(
+                0,
+                settings.db_max_overflow,
+            ),
+            "pool_timeout": max(
+                5.0,
+                settings.db_pool_timeout_seconds,
+            ),
+            "pool_recycle": 1800,
+        }
+    )
+
 engine = create_async_engine(
-    normalize_async_database_url(settings.database_url),
-    pool_pre_ping=True,
+    database_url,
+    **engine_kwargs,
 )
 
 SessionLocal = async_sessionmaker(
@@ -34,7 +63,38 @@ SessionLocal = async_sessionmaker(
 
 async def init_db() -> None:
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(
+            Base.metadata.create_all
+        )
+
+        # Sem Alembic neste projeto, garante índices novos também
+        # em bancos que já possuem as tabelas.
+        for statement in (
+            (
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_shipment_poll_active_registered "
+                "ON shipments (is_active, status, registered_at)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_shipment_last_event_at "
+                "ON shipments (last_event_at)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_subscription_shipment_notify "
+                "ON subscriptions "
+                "(shipment_id, is_active, notifications_enabled)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_polling_next_check "
+                "ON polling_states (next_check_at)"
+            ),
+        ):
+            await conn.exec_driver_sql(
+                statement
+            )
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

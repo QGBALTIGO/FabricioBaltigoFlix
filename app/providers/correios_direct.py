@@ -5,6 +5,8 @@ from typing import Any
 
 import httpx
 
+from app.http_client import get_provider_http_client
+
 from app.providers.base import (
     ProviderEvent,
     ProviderNotFound,
@@ -40,16 +42,17 @@ class CorreiosDirectProvider:
             raise ProviderNotFound("Formato não compatível com Correios.")
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(
-                    f"{self.endpoint}/{number}",
-                    headers={
+            client = await get_provider_http_client()
+            response = await client.get(
+                f"{self.endpoint}/{number}",
+                timeout=self.timeout,
+                headers={
                         "Accept": "application/json",
                         "User-Agent": "Mozilla/5.0",
                         "Origin": "https://rastreamento.correios.com.br",
                         "Referer": "https://rastreamento.correios.com.br/",
-                    },
-                )
+                },
+            )
             response.raise_for_status()
             data = response.json()
         except (httpx.HTTPError, ValueError) as exc:

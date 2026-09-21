@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
+import time
+from datetime import (
+    datetime,
+    timedelta,
+    timezone,
+)
 import math
 
-from sqlalchemy import func, select
+from sqlalchemy import (
+    and_,
+    func,
+    or_,
+    select,
+)
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -15,18 +27,15 @@ from telegram.ext import CallbackContext
 
 from app.bot.keyboards import (
     add_package_help_keyboard,
-    filters_keyboard,
     history_keyboard,
     list_keyboard,
     main_menu_keyboard,
-    notify_keyboard,
     shipment_keyboard,
 )
 from app.bot.messages import (
     HELP,
     INVALID_CODE,
     NO_SHIPMENTS,
-    SECURITY,
     WELCOME,
 )
 from app.bot.rich import (
@@ -50,21 +59,19 @@ from app.presentation import (
 )
 from app.share import verify_share_payload
 from app.status import (
-    status_explanation,
     status_label,
 )
 from app.utils import (
-    format_datetime,
     humanize_age,
-    is_stale,
     is_valid_tracking_number,
-    mentions_payment,
     normalize_tracking_number,
     parse_tracking_input,
 )
 
 log = logging.getLogger(__name__)
 settings = get_settings()
+
+_channel_member_cache: dict[int, float] = {}
 
 
 def service(context: CallbackContext):
@@ -106,12 +113,45 @@ async def _require_channel_membership(
     if not user:
         return False
 
+    now = time.monotonic()
+    cached_until = _channel_member_cache.get(
+        user.id,
+        0.0,
+    )
+    if cached_until > now:
+        return True
+
+    if len(_channel_member_cache) > 20000:
+        expired = [
+            telegram_id
+            for (
+                telegram_id,
+                expires_at,
+            ) in _channel_member_cache.items()
+            if expires_at <= now
+        ]
+        for telegram_id in expired:
+            _channel_member_cache.pop(
+                telegram_id,
+                None,
+            )
+
     try:
         member = await context.bot.get_chat_member(
             chat_id=settings.required_channel,
             user_id=user.id,
         )
         if _is_channel_member(member):
+            _channel_member_cache[
+                user.id
+            ] = (
+                now
+                + max(
+                    0,
+                    settings
+                    .required_channel_positive_cache_seconds,
+                )
+            )
             return True
     except Exception:
         log.exception(
@@ -440,19 +480,6 @@ async def help_cmd(
     )
 
 
-async def security_cmd(
-    update: Update,
-    context: CallbackContext,
-) -> None:
-    await (
-        update.effective_message
-        .reply_text(
-            SECURITY,
-            parse_mode=ParseMode.HTML,
-        )
-    )
-
-
 async def track_cmd(
     update: Update,
     context: CallbackContext,
@@ -498,17 +525,6 @@ async def text_tracking(
         update.effective_message.text
         or ""
     ).strip()
-
-    pending = context.user_data.get(
-        "rename_subscription_id"
-    )
-    if pending:
-        await rename_finish(
-            update,
-            context,
-            text,
-        )
-        return
 
     if text == "📦 Meus pacotes":
         await my_shipments(
@@ -670,75 +686,6 @@ async def delivered(
         update,
         context,
         page=0,
-    )
-
-
-async def search_cmd(
-    update: Update,
-    context: CallbackContext,
-) -> None:
-    query = " ".join(
-        context.args
-    ).strip()
-
-    if not query:
-        await (
-            update.effective_message
-            .reply_text(
-                (
-                    "🔎 Use "
-                    "<code>/buscar TERMO</code>. "
-                    "Você pode procurar por "
-                    "código, apelido, "
-                    "transportadora ou "
-                    "texto/status do rastreio."
-                ),
-                parse_mode=(
-                    ParseMode.HTML
-                ),
-            )
-        )
-        return
-
-    context.user_data[
-        "list_state"
-    ] = {
-        "mode": "search",
-        "query": query,
-    }
-
-    await _show_list(
-        update,
-        context,
-        page=0,
-    )
-
-
-async def filters_cmd(
-    update: Update,
-    context: CallbackContext,
-) -> None:
-    await _ensure_current_user(
-        update,
-        context,
-    )
-
-    await (
-        update.effective_message
-        .reply_text(
-            (
-                "🎛 <b>Filtros inteligentes</b>\n\n"
-                "Escolha um status ou filtre "
-                "por transportadora. "
-                "Você também pode usar "
-                "/buscar para combinar "
-                "uma busca por texto."
-            ),
-            parse_mode=ParseMode.HTML,
-            reply_markup=(
-                filters_keyboard()
-            ),
-        )
     )
 
 
@@ -938,11 +885,15 @@ async def _show_list(
         if mode == "active":
             text = _my_packages_text(total)
         else:
+            count_text = (
+                "<b>1 encomenda</b>"
+                if total == 1
+                else f"<b>{total} encomendas</b>"
+            )
             text = (
                 f"{title}{suffix}\n\n"
-                f"{total} rastreio(s). "
-                "Toque em um pacote para "
-                "abrir os detalhes."
+                f"Você tem {count_text} nesta lista.\n\n"
+                "Toque em um pacote para abrir os detalhes."
             )
 
     markup = list_keyboard(
@@ -1055,51 +1006,50 @@ async def report_cmd(
             )
         ).all()
 
-        subs = list(
-            (
-                await session.scalars(
-                    select(
-                        Subscription
-                    )
-                    .join(
-                        Shipment,
-                        Shipment.id
-                        == Subscription
-                        .shipment_id,
-                    )
-                    .where(
-                        Subscription.user_id
-                        == user.id,
-                        Subscription.is_active
-                        .is_(True),
-                    )
-                )
-            ).all()
-        )
-
-        stale = 0
-
-        for sub in subs:
-            shipment = (
-                await session.get(
-                    Shipment,
-                    sub.shipment_id,
+        stale_cutoff = (
+            datetime.now(timezone.utc)
+            - timedelta(
+                hours=(
+                    settings
+                    .stale_after_hours
                 )
             )
+        )
 
-            if (
-                shipment
-                and shipment.status
-                != "delivered"
-                and is_stale(
-                    shipment.last_event_at
-                    or shipment
-                    .registered_at,
-                    settings
-                    .stale_after_hours,
+        stale = int(
+            await session.scalar(
+                select(
+                    func.count(
+                        Subscription.id
+                    )
                 )
-            ):
-                stale += 1
+                .join(
+                    Shipment,
+                    Shipment.id
+                    == Subscription.shipment_id,
+                )
+                .where(
+                    Subscription.user_id
+                    == user.id,
+                    Subscription.is_active.is_(
+                        True
+                    ),
+                    Shipment.status
+                    != "delivered",
+                    or_(
+                        Shipment.last_event_at
+                        <= stale_cutoff,
+                        and_(
+                            Shipment.last_event_at
+                            .is_(None),
+                            Shipment.registered_at
+                            <= stale_cutoff,
+                        ),
+                    ),
+                )
+            )
+            or 0
+        )
 
     total = sum(
         int(count)
@@ -1167,122 +1117,17 @@ async def config_cmd(
         update.effective_message
         .reply_text(
             (
-                "⚙️ <b>Preferências de alertas</b>\n\n"
-                "Abra um pacote em /meus "
-                "e toque em <b>⚙️ Alertas</b>.\n\n"
-                "• ⭐ Importantes — recomendado\n"
-                "• 🔔 Todos — cada movimentação\n"
-                "• 🔕 Sem alertas — somente consulta manual\n\n"
-                "⚠️ Também avisamos uma vez "
-                "quando um pacote fica "
-                f"{days}+ dia(s) sem movimentação, "
-                "se o monitor estiver habilitado."
+                "🔔 <b>Alertas de rastreio</b>\n\n"
+                "Abra <b>📦 Meus pacotes</b>, toque na encomenda "
+                "e use o botão <b>🔔 Ativar alerta</b> ou "
+                "<b>🔕 Desativar alerta</b>.\n\n"
+                "Quando ativos, você recebe novas movimentações "
+                "importantes automaticamente.\n\n"
+                "⚠️ O bot também pode avisar quando uma encomenda "
+                f"fica {days}+ dia(s) sem movimentação."
             ),
             parse_mode=ParseMode.HTML,
         )
-    )
-
-
-async def bot_status(
-    update: Update,
-    context: CallbackContext,
-) -> None:
-    async with SessionLocal() as session:
-        users = await session.scalar(select(func.count(User.id)))
-        shipments = await session.scalar(select(func.count(Shipment.id)))
-        active = await session.scalar(
-            select(func.count(Shipment.id)).where(Shipment.is_active.is_(True))
-        )
-
-    providers = []
-    if settings.melhor_rastreio_enabled:
-        providers.append("Melhor Rastreio GraphQL ✅")
-    if settings.direct_fallbacks_enabled:
-        providers.append("Fallbacks diretos ✅")
-    if settings.seventeen_track_token:
-        providers.append("17TRACK opcional ✅")
-    if settings.ship24_api_key:
-        providers.append("Ship24 opcional ✅")
-
-    if not providers:
-        providers.append("Nenhuma fonte ⚠️")
-
-    poller = (
-        "✅ inteligente"
-        if settings.tracking_poller_enabled
-        else "desativado"
-    )
-
-    await update.effective_message.reply_text(
-        (
-            "🟢 <b>"
-            f"{html.escape(settings.app_name)}"
-            "</b>\n\n"
-            f"Fontes: {', '.join(providers)}\n"
-            f"Polling: {poller}\n"
-            f"Usuários: {users or 0}\n"
-            f"Encomendas: {shipments or 0}\n"
-            f"Ativas: {active or 0}"
-        ),
-        parse_mode=ParseMode.HTML,
-    )
-
-
-async def carriers(
-    update: Update,
-    context: CallbackContext,
-) -> None:
-    query = " ".join(context.args).strip().lower()
-
-    catalog = [
-        ("Correios", "Melhor Rastreio + fallback direto"),
-        ("Jadlog", "Melhor Rastreio + fallback direto"),
-        ("J&T Express", "Melhor Rastreio"),
-        ("Loggi", "Melhor Rastreio"),
-        ("LATAM Cargo", "Melhor Rastreio"),
-        ("Azul Cargo", "Melhor Rastreio"),
-        ("Buslog", "Melhor Rastreio"),
-        ("Viação Mundo", "Melhor Rastreio"),
-        ("Melhor Envio", "Melhor Rastreio"),
-        ("Total Express", "fallback direto"),
-    ]
-
-    if query:
-        catalog = [
-            item
-            for item in catalog
-            if query in item[0].lower()
-        ]
-
-    if not catalog:
-        await update.effective_message.reply_text(
-            "Nenhuma transportadora encontrada nesse catálogo."
-        )
-        return
-
-    lines = [
-        "🚚 <b>Transportadoras disponíveis</b>",
-        "",
-    ]
-    for name, source in catalog:
-        lines.append(
-            "• "
-            + html.escape(name)
-            + " — "
-            + html.escape(source)
-        )
-
-    lines.extend(
-        [
-            "",
-            "💡 Você não precisa escolher a transportadora na maioria dos casos: "
-            "envie o código e o bot tenta as fontes automaticamente.",
-        ]
-    )
-
-    await update.effective_message.reply_text(
-        "\n".join(lines),
-        parse_mode=ParseMode.HTML,
     )
 
 
@@ -1299,13 +1144,6 @@ async def callback(
         await query.answer()
 
     if data == "noop":
-        return
-
-    if data == "security":
-        await query.message.reply_text(
-            SECURITY,
-            parse_mode=ParseMode.HTML,
-        )
         return
 
     if data == "packages:add":
@@ -1359,161 +1197,6 @@ async def callback(
         )
         return
 
-    if data.startswith(
-        "filterstatus:"
-    ):
-        status = data.split(
-            ":",
-            1,
-        )[1]
-
-        context.user_data[
-            "list_state"
-        ] = {
-            "mode": "filter",
-            "status": status,
-        }
-
-        await _show_list(
-            update,
-            context,
-            page=0,
-            edit=True,
-        )
-        return
-
-    if data == "filters:clear":
-        context.user_data[
-            "list_state"
-        ] = {
-            "mode": "active"
-        }
-
-        await _show_list(
-            update,
-            context,
-            page=0,
-            edit=True,
-        )
-        return
-
-    if data == "filters:carriers":
-        async with SessionLocal() as session:
-            user = await session.scalar(
-                select(User).where(
-                    User.telegram_id
-                    == update
-                    .effective_user.id
-                )
-            )
-
-            choices = (
-                await service(
-                    context
-                ).carriers_for_user(
-                    session,
-                    user.id,
-                )
-                if user
-                else []
-            )
-
-        context.user_data[
-            "carrier_choices"
-        ] = choices
-
-        if not choices:
-            await (
-                query.edit_message_text(
-                    "🚚 Você ainda não tem "
-                    "transportadoras identificadas "
-                    "nos seus rastreios."
-                )
-            )
-            return
-
-        rows = [
-            [
-                InlineKeyboardButton(
-                    name[:45],
-                    callback_data=(
-                        f"filtercarrier:{i}"
-                    ),
-                )
-            ]
-            for i, name in enumerate(
-                choices[:25]
-            )
-        ]
-
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    "🧹 Limpar filtros",
-                    callback_data=(
-                        "filters:clear"
-                    ),
-                )
-            ]
-        )
-
-        await query.edit_message_text(
-            (
-                "🚚 <b>Filtrar por "
-                "transportadora</b>"
-            ),
-            parse_mode=ParseMode.HTML,
-            reply_markup=(
-                InlineKeyboardMarkup(
-                    rows
-                )
-            ),
-        )
-        return
-
-    if data.startswith(
-        "filtercarrier:"
-    ):
-        index = int(
-            data.split(
-                ":",
-                1,
-            )[1]
-        )
-        choices = (
-            context.user_data.get(
-                "carrier_choices"
-            )
-            or []
-        )
-
-        if index >= len(choices):
-            await query.answer(
-                (
-                    "Filtro expirou. "
-                    "Use /filtros novamente."
-                ),
-                show_alert=True,
-            )
-            return
-
-        context.user_data[
-            "list_state"
-        ] = {
-            "mode": "filter",
-            "carrier": choices[
-                index
-            ],
-        }
-
-        await _show_list(
-            update,
-            context,
-            page=0,
-            edit=True,
-        )
-        return
-
     parts = data.split(":")
     action = parts[0]
 
@@ -1563,7 +1246,7 @@ async def callback(
             try:
                 await service(
                     context
-                ).refresh_shipment(
+                ).refresh_if_stale(
                     session,
                     sub.shipment,
                 )
@@ -1589,9 +1272,10 @@ async def callback(
             try:
                 await service(
                     context
-                ).refresh_shipment(
+                ).refresh_if_stale(
                     session,
                     sub.shipment,
+                    min_age_seconds=0,
                 )
 
                 sub = await service(
@@ -1638,7 +1322,7 @@ async def callback(
                 try:
                     await service(
                         context
-                    ).refresh_shipment(
+                    ).refresh_if_stale(
                         session,
                         sub.shipment,
                     )
@@ -1717,59 +1401,8 @@ async def callback(
                     ),
                 )
 
-        elif action == "explain":
-            await (
-                query.message
-                .reply_text(
-                    (
-                        status_label(
-                            sub.shipment.status
-                        )
-                        + "\n\n"
-                        + html.escape(
-                            status_explanation(
-                                sub.shipment.status
-                            )
-                        )
-                    ),
-                    parse_mode=(
-                        ParseMode.HTML
-                    ),
-                )
-            )
 
-        elif action == "rename":
-            context.user_data[
-                "rename_subscription_id"
-            ] = sub.id
 
-            await (
-                query.message
-                .reply_text(
-                    "✏️ Envie agora o novo "
-                    "nome/apelido dessa encomenda "
-                    "(até 120 caracteres)."
-                )
-            )
-
-        elif action == "alerts":
-            await (
-                query.message
-                .reply_text(
-                    (
-                        "🔔 <b>Como você quer "
-                        "receber as atualizações?</b>"
-                    ),
-                    parse_mode=(
-                        ParseMode.HTML
-                    ),
-                    reply_markup=(
-                        notify_keyboard(
-                            sub
-                        )
-                    ),
-                )
-            )
 
         elif action == "mute":
             sub.notifications_enabled = (
@@ -1800,31 +1433,6 @@ async def callback(
                 sub,
             )
 
-        elif (
-            action == "notify"
-            and len(parts) >= 3
-        ):
-            level = parts[2]
-
-            if level not in {
-                "important",
-                "all",
-                "off",
-            }:
-                return
-
-            sub.notify_level = level
-            sub.notifications_enabled = (
-                level != "off"
-            )
-
-            await session.commit()
-
-            await _edit_tracking_card(
-                context,
-                query.message,
-                sub,
-            )
 
         elif action == "delete":
             sub.is_active = False
@@ -1845,74 +1453,6 @@ async def callback(
                     ParseMode.HTML
                 ),
             )
-
-
-async def rename_finish(
-    update: Update,
-    context: CallbackContext,
-    text: str,
-) -> None:
-    sub_id = context.user_data.pop(
-        "rename_subscription_id",
-        None,
-    )
-
-    if not sub_id:
-        return
-
-    name = text.strip()[:120]
-
-    if not name:
-        await (
-            update.effective_message
-            .reply_text(
-                "Nome inválido."
-            )
-        )
-        return
-
-    async with SessionLocal() as session:
-        user = await session.scalar(
-            select(User).where(
-                User.telegram_id
-                == update.effective_user.id
-            )
-        )
-
-        sub = (
-            await service(
-                context
-            ).get_subscription(
-                session,
-                user.id,
-                sub_id,
-            )
-            if user
-            else None
-        )
-
-        if not sub:
-            await (
-                update.effective_message
-                .reply_text(
-                    "Rastreio não encontrado."
-                )
-            )
-            return
-
-        sub.nickname = name
-        await session.commit()
-
-        await (
-            update.effective_message.reply_text(
-                "✅ Nome atualizado."
-            )
-        )
-        await _send_tracking_card(
-            context,
-            update.effective_chat.id,
-            sub,
-        )
 
 
 async def admin(
@@ -2024,6 +1564,88 @@ async def admin(
     )
 
 
+async def _broadcast_worker(
+    bot,
+    ids: list[int],
+    text: str,
+    admin_chat_id: int,
+) -> None:
+    sent = 0
+    failed = 0
+    batch_size = max(
+        1,
+        settings.broadcast_batch_size,
+    )
+
+    for offset in range(
+        0,
+        len(ids),
+        batch_size,
+    ):
+        batch = ids[
+            offset:offset + batch_size
+        ]
+
+        async def send_one(
+            chat_id: int,
+        ) -> bool:
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                )
+                return True
+            except Exception:
+                return False
+
+        results = await asyncio.gather(
+            *(
+                send_one(chat_id)
+                for chat_id in batch
+            )
+        )
+
+        sent += sum(
+            1
+            for result in results
+            if result
+        )
+        failed += (
+            len(results)
+            - sum(
+                1
+                for result in results
+                if result
+            )
+        )
+
+        if (
+            offset + batch_size
+            < len(ids)
+            and settings
+            .broadcast_batch_pause_seconds
+            > 0
+        ):
+            await asyncio.sleep(
+                settings
+                .broadcast_batch_pause_seconds
+            )
+
+    try:
+        await bot.send_message(
+            chat_id=admin_chat_id,
+            text=(
+                "✅ Broadcast concluído.\n"
+                f"Enviados: {sent}\n"
+                f"Falhas: {failed}"
+            ),
+        )
+    except Exception:
+        log.exception(
+            "Falha ao enviar resumo do broadcast"
+        )
+
+
 async def broadcast(
     update: Update,
     context: CallbackContext,
@@ -2061,24 +1683,23 @@ async def broadcast(
             ).all()
         )
 
-    sent = 0
-
-    for chat_id in ids:
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-            )
-            sent += 1
-        except Exception:
-            pass
+    context.application.create_task(
+        _broadcast_worker(
+            context.bot,
+            ids,
+            text,
+            update.effective_chat.id,
+        ),
+        update=update,
+        name="admin-broadcast",
+    )
 
     await (
         update.effective_message
         .reply_text(
             (
-                "✅ Broadcast enviado para "
-                f"{sent}/{len(ids)} usuários."
+                "🚀 Broadcast iniciado em segundo plano "
+                f"para {len(ids)} usuário(s)."
             )
         )
     )
@@ -2116,10 +1737,6 @@ async def cancel_cmd(
     update: Update,
     context: CallbackContext,
 ) -> None:
-    context.user_data.pop(
-        "rename_subscription_id",
-        None,
-    )
     await (
         update.effective_message
         .reply_text(
