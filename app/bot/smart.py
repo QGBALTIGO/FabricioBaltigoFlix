@@ -715,9 +715,9 @@ async def smart_callback(
         return
 
     data = query.data or ""
-    await query.answer()
 
     if data == "today:refresh":
+        await query.answer()
         text, markup = await _build_today(
             update,
             context,
@@ -730,6 +730,7 @@ async def smart_callback(
         return
 
     if data.startswith("todaylist:"):
+        await query.answer()
         bucket_name = data.split(":", 1)[1]
         text, markup = await _today_list(
             update,
@@ -744,6 +745,7 @@ async def smart_callback(
         return
 
     if data.startswith("smartcancel:"):
+        await query.answer()
         context.user_data.pop(
             "smart_tracking_candidates",
             None,
@@ -754,6 +756,7 @@ async def smart_callback(
         return
 
     if data.startswith("smartadd:"):
+        await query.answer()
         token = data.split(":", 1)[1]
         saved = context.user_data.get(
             "smart_tracking_candidates",
@@ -799,6 +802,8 @@ async def smart_callback(
                 show_alert=True,
             )
             return
+
+        await query.answer()
 
         if data.startswith("alertmenu:"):
             text, markup = await _alert_menu(
