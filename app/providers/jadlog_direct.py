@@ -5,6 +5,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import httpx
+
+from app.http_client import get_provider_http_client
 from bs4 import BeautifulSoup
 
 from app.providers.base import (
@@ -47,19 +49,20 @@ class JadlogDirectProvider:
             raise ProviderNotFound("Formato não compatível com Jadlog.")
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    self.endpoint,
-                    data={"cte": number},
-                    headers={
+            client = await get_provider_http_client()
+            response = await client.post(
+                self.endpoint,
+                data={"cte": number},
+                timeout=self.timeout,
+                headers={
                         "User-Agent": "Mozilla/5.0",
                         "Accept": "text/html,application/xhtml+xml",
                         "Content-Type": "application/x-www-form-urlencoded",
                         "Origin": "https://www.jadlog.com.br",
                         "Referer": "https://www.jadlog.com.br/jadlog/home",
-                    },
-                    follow_redirects=True,
-                )
+                },
+                follow_redirects=True,
+            )
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise ProviderUnavailable(
