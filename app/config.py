@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     broadcast_batch_size: int = 25
     broadcast_batch_pause_seconds: float = 1.0
 
+    telemetry_retention_days: int = 7
+    telemetry_cleanup_hours: int = 6
+
     support_url: str = ""
 
     @property
