@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     poll_exception_minutes: int = 10
 
     notification_send_spacing_seconds: float = 0.04
+    broadcast_batch_size: int = 25
+    broadcast_batch_pause_seconds: float = 1.0
 
     support_url: str = ""
 
