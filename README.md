@@ -64,6 +64,7 @@ Comandos principais:
 
 - /rastrear CODIGO
 - /meus
+- /resumo
 - /entregues
 - /buscar TERMO
 - /filtros
