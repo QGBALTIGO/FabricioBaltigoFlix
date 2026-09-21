@@ -58,6 +58,9 @@ from app.presentation import (
     format_tracking_rich_html,
 )
 from app.share import verify_share_payload
+from app.services.preferences import (
+    apply_intake_metadata,
+)
 from app.status import (
     status_label,
 )
@@ -526,6 +529,15 @@ async def text_tracking(
         or ""
     ).strip()
 
+    if text == "🏠 Hoje":
+        from app.bot.smart import today_cmd
+
+        await today_cmd(
+            update,
+            context,
+        )
+        return
+
     if text == "📦 Meus pacotes":
         await my_shipments(
             update,
@@ -548,6 +560,36 @@ async def text_tracking(
         text
     )
     if not number:
+        from app.bot.smart import (
+            offer_smart_candidates,
+        )
+
+        message = update.effective_message
+        forwarded = bool(
+            getattr(
+                message,
+                "forward_origin",
+                None,
+            )
+            or getattr(
+                message,
+                "forward_date",
+                None,
+            )
+        )
+        offered = await offer_smart_candidates(
+            update,
+            context,
+            text,
+            source=(
+                "forwarded_message"
+                if forwarded
+                else "message"
+            ),
+        )
+        if offered:
+            return
+
         await (
             update.effective_message
             .reply_text(
@@ -571,7 +613,8 @@ async def add_tracking(
     context: CallbackContext,
     raw: str,
     nickname: str | None = None,
-) -> None:
+    intake_metadata: dict | None = None,
+) -> bool:
     number = normalize_tracking_number(
         raw
     )
@@ -588,13 +631,13 @@ async def add_tracking(
                 ),
             )
         )
-        return
+        return False
 
     if not await _require_channel_membership(
         update,
         context,
     ):
-        return
+        return False
 
     msg = await (
         update.effective_message
@@ -628,12 +671,32 @@ async def add_tracking(
                 nickname=nickname,
             )
 
+            if intake_metadata:
+                await apply_intake_metadata(
+                    session,
+                    result.subscription.id,
+                    store_name=intake_metadata.get(
+                        "store_name"
+                    ),
+                    order_number=intake_metadata.get(
+                        "order_number"
+                    ),
+                    product_name=intake_metadata.get(
+                        "product_name"
+                    ),
+                    source=intake_metadata.get(
+                        "source"
+                    ),
+                )
+                await session.commit()
+
             await _edit_tracking_card(
                 context,
                 msg,
                 result.subscription,
                 warning=result.warning,
             )
+            return True
 
     except ValueError as exc:
         await msg.edit_text(
@@ -642,6 +705,7 @@ async def add_tracking(
                 str(exc)
             )
         )
+        return False
 
     except Exception:
         log.exception(
@@ -653,6 +717,7 @@ async def add_tracking(
             "Tente novamente em alguns "
             "minutos."
         )
+        return False
 
 
 async def my_shipments(
@@ -1119,10 +1184,12 @@ async def config_cmd(
             (
                 "🔔 <b>Alertas de rastreio</b>\n\n"
                 "Abra <b>📦 Meus pacotes</b>, toque na encomenda "
-                "e use o botão <b>🔔 Ativar alerta</b> ou "
-                "<b>🔕 Desativar alerta</b>.\n\n"
-                "Quando ativos, você recebe novas movimentações "
-                "importantes automaticamente.\n\n"
+                "e use <b>⚙️ Alertas</b> para escolher quais "
+                "movimentações quer receber.\n\n"
+                "Você pode separar saída para entrega, problemas, "
+                "entrega concluída e movimentações intermediárias. "
+                "Também há horários silenciosos; nesse período os "
+                "avisos ficam guardados e chegam depois.\n\n"
                 "⚠️ O bot também pode avisar quando uma encomenda "
                 f"fica {days}+ dia(s) sem movimentação."
             ),
