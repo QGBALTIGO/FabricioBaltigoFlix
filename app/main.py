@@ -25,6 +25,9 @@ from app.bot.factory import (
     build_telegram_app,
     set_commands,
 )
+from app.bot.rich import (
+    close_rich_client,
+)
 from app.config import get_settings
 from app.database import (
     SessionLocal,
@@ -40,7 +43,6 @@ from app.ratelimit import SlidingWindowLimiter
 from app.services.monitor import monitoring_loop
 from app.services.notifier import (
     notify_new_events,
-    send_admin_notification_previews,
 )
 from app.services.tracking import TrackingService
 from app.status import status_label
@@ -94,14 +96,6 @@ async def lifespan(app: FastAPI):
         await telegram_app.initialize()
         await telegram_app.start()
         await set_commands(telegram_app)
-
-        if settings.admin_preview_notifications_on_startup:
-            try:
-                await send_admin_notification_previews()
-            except Exception:
-                log.exception(
-                    "Falha ao enviar prévias de notificação ao admin"
-                )
 
         if (
             settings.telegram_mode.lower()
@@ -185,6 +179,8 @@ async def lifespan(app: FastAPI):
         await telegram_app.stop()
         await telegram_app.shutdown()
 
+    await close_rich_client()
+
 
 app = FastAPI(
     title=settings.app_name,
@@ -263,13 +259,23 @@ async def telegram_webhook(
         )
 
     payload = await request.json()
-
-    await telegram_app.process_update(
-        Update.de_json(
-            payload,
-            telegram_app.bot,
-        )
+    update = Update.de_json(
+        payload,
+        telegram_app.bot,
     )
+
+    try:
+        telegram_app.update_queue.put_nowait(
+            update
+        )
+    except asyncio.QueueFull:
+        log.warning(
+            "Fila de updates do Telegram cheia."
+        )
+        raise HTTPException(
+            503,
+            "Fila temporariamente cheia",
+        )
 
     return {"ok": True}
 
