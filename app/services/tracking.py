@@ -817,6 +817,11 @@ class TrackingService:
                         else None
                     )
                 ),
+                context_name=(
+                    shipment.carrier_name
+                    or shipment.carrier_code
+                    or "Em detecção"
+                ),
             )
 
             if data is not None:
@@ -885,6 +890,11 @@ class TrackingService:
                             if error is not None
                             else None
                         )
+                    ),
+                    context_name=(
+                        shipment.carrier_name
+                        or shipment.carrier_code
+                        or "Em detecção"
                     ),
                 )
 
