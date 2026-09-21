@@ -39,15 +39,6 @@ def shipment_keyboard(
     bot_username: str | None = None,
     share_secret: str = "",
 ) -> InlineKeyboardMarkup:
-    alert_text = (
-        "🔔 Ativar alerta"
-        if (
-            not sub.notifications_enabled
-            or sub.notify_level == "off"
-        )
-        else "🔕 Desativar alerta"
-    )
-
     rows = [
         [
             InlineKeyboardButton(
@@ -57,13 +48,7 @@ def shipment_keyboard(
         ],
         [
             InlineKeyboardButton(
-                alert_text,
-                callback_data=f"mute:{sub.id}",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "⚙️ Alertas",
+                "🔔 Alertas",
                 callback_data=f"alertmenu:{sub.id}",
             ),
             InlineKeyboardButton(
