@@ -19,7 +19,7 @@ STATUS_META = {
 
 STATUS_EXPLANATIONS = {
     "unknown": "Ainda não recebemos uma movimentação suficiente para classificar o envio. Códigos recém-criados podem levar algumas horas para aparecer.",
-    "info_received": "A transportadora recebeu os dados do envio, mas isso não significa necessariamente que o pacote já foi coletado fisicamente.",
+    "info_received": "A transportadora recebeu os dados do envio, mas a encomenda ainda pode estar aguardando coleta.",
     "picked_up": "A encomenda foi postada ou coletada e entrou na operação da transportadora.",
     "in_transit": "A encomenda está se deslocando entre unidades, centros de distribuição ou cidades. Nem toda etapa gera uma nova leitura.",
     "customs": "A encomenda está em análise aduaneira ou fiscal. Confirme qualquer cobrança somente em canais oficiais.",
