@@ -45,6 +45,18 @@ class User(Base):
 
 class Shipment(Base):
     __tablename__ = "shipments"
+    __table_args__ = (
+        Index(
+            "ix_shipment_poll_active_registered",
+            "is_active",
+            "status",
+            "registered_at",
+        ),
+        Index(
+            "ix_shipment_last_event_at",
+            "last_event_at",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     tracking_number: Mapped[str] = mapped_column(String(80), unique=True, index=True)
@@ -83,6 +95,12 @@ class Subscription(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "shipment_id", name="uq_user_shipment"),
         Index("ix_subscription_user_active", "user_id", "is_active"),
+        Index(
+            "ix_subscription_shipment_notify",
+            "shipment_id",
+            "is_active",
+            "notifications_enabled",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
