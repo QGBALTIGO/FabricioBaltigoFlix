@@ -45,6 +45,8 @@ class AddResult:
 class TrackingService:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self._tracking_locks: dict[str, asyncio.Lock] = {}
+        self._refresh_locks: dict[int, asyncio.Lock] = {}
 
         self.melhor = (
             MelhorRastreioProvider(settings.http_timeout_seconds)
@@ -156,6 +158,29 @@ class TrackingService:
         tracking_number: str,
         nickname: str | None = None,
     ) -> AddResult:
+        number = normalize_tracking_number(
+            tracking_number
+        )
+        lock = self._tracking_locks.setdefault(
+            number,
+            asyncio.Lock(),
+        )
+
+        async with lock:
+            return await self._add_tracking_unlocked(
+                session,
+                user,
+                number,
+                nickname=nickname,
+            )
+
+    async def _add_tracking_unlocked(
+        self,
+        session: AsyncSession,
+        user: User,
+        tracking_number: str,
+        nickname: str | None = None,
+    ) -> AddResult:
         number = normalize_tracking_number(tracking_number)
         shipment = await session.scalar(
             select(Shipment).where(Shipment.tracking_number == number)
@@ -179,12 +204,12 @@ class TrackingService:
                 )
             await self._schedule_next_poll(session, shipment)
         else:
-            # Reenviar um código também funciona como consulta manual:
-            # busca dados frescos antes de responder ao usuário.
-            provider_data = await self._query_best_provider(session, shipment)
-            if provider_data:
-                await self._apply_provider_data(session, shipment, provider_data)
-                await self._schedule_next_poll(session, shipment)
+            # Reutiliza uma consulta recente para evitar tempestade de
+            # requests quando vários usuários abrem/adicionam o mesmo código.
+            await self.refresh_if_stale(
+                session,
+                shipment,
+            )
 
         subscription = await session.scalar(
             select(Subscription)
@@ -637,6 +662,64 @@ class TrackingService:
             row.quarantined_until = datetime.now(timezone.utc) + quarantine
         await session.flush()
 
+    async def refresh_if_stale(
+        self,
+        session: AsyncSession,
+        shipment: Shipment,
+        *,
+        min_age_seconds: int | None = None,
+    ) -> ProviderTracking | None:
+        if shipment.id is None:
+            return await self.refresh_shipment(
+                session,
+                shipment,
+            )
+
+        lock = self._refresh_locks.setdefault(
+            shipment.id,
+            asyncio.Lock(),
+        )
+
+        async with lock:
+            state = await session.scalar(
+                select(PollingState).where(
+                    PollingState.shipment_id
+                    == shipment.id
+                )
+            )
+
+            minimum_age = max(
+                0,
+                (
+                    self.settings.manual_refresh_min_seconds
+                    if min_age_seconds is None
+                    else min_age_seconds
+                ),
+            )
+
+            if (
+                state
+                and state.last_checked_at
+                and minimum_age > 0
+            ):
+                last_checked = self._as_utc(
+                    state.last_checked_at
+                )
+                if (
+                    last_checked
+                    and (
+                        datetime.now(timezone.utc)
+                        - last_checked
+                    ).total_seconds()
+                    < minimum_age
+                ):
+                    return None
+
+            return await self.refresh_shipment(
+                session,
+                shipment,
+            )
+
     async def refresh_shipment(
         self,
         session: AsyncSession,
@@ -742,31 +825,57 @@ class TrackingService:
         shipment.status_raw = data.status_raw or shipment.status_raw
 
         try:
+            # Text no Postgres não precisa de truncamento. Cortar JSON no
+            # meio gerava payload inválido e fazia rota/ETA desaparecerem.
             shipment.extra_json = json.dumps(
                 data.raw,
                 ensure_ascii=False,
                 default=str,
-            )[:20000]
+            )
         except Exception:
             pass
 
-        new_events: list[TrackingEvent] = []
-
+        event_rows: list[tuple[Any, str]] = []
         for ev in data.events:
-            h = event_hash(
-                shipment.tracking_number,
-                ev.status,
-                ev.description,
-                ev.location,
-                ev.event_at,
-            )
-            exists = await session.scalar(
-                select(TrackingEvent.id).where(
-                    TrackingEvent.shipment_id == shipment.id,
-                    TrackingEvent.event_hash == h,
+            event_rows.append(
+                (
+                    ev,
+                    event_hash(
+                        shipment.tracking_number,
+                        ev.status,
+                        ev.description,
+                        ev.location,
+                        ev.event_at,
+                    ),
                 )
             )
-            if exists:
+
+        existing_hashes: set[str] = set()
+        if event_rows:
+            hashes = [
+                item[1]
+                for item in event_rows
+            ]
+            existing_hashes = set(
+                (
+                    await session.scalars(
+                        select(
+                            TrackingEvent.event_hash
+                        ).where(
+                            TrackingEvent.shipment_id
+                            == shipment.id,
+                            TrackingEvent.event_hash.in_(
+                                hashes
+                            ),
+                        )
+                    )
+                ).all()
+            )
+
+        new_events: list[TrackingEvent] = []
+
+        for ev, h in event_rows:
+            if h in existing_hashes:
                 continue
 
             model = TrackingEvent(
@@ -1008,6 +1117,11 @@ class TrackingService:
                 ),
             )
             .order_by(Shipment.last_event_at.asc().nullsfirst())
-            .limit(500)
+            .limit(
+                max(
+                    50,
+                    self.settings.poll_batch_size,
+                )
+            )
         )
         return list((await session.scalars(stmt)).all())
