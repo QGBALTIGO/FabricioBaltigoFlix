@@ -3,9 +3,19 @@ from __future__ import annotations
 import html
 import logging
 import time
+from datetime import (
+    datetime,
+    timedelta,
+    timezone,
+)
 import math
 
-from sqlalchemy import func, select
+from sqlalchemy import (
+    and_,
+    func,
+    or_,
+    select,
+)
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -974,11 +984,15 @@ async def _show_list(
         if mode == "active":
             text = _my_packages_text(total)
         else:
+            count_text = (
+                "<b>1 encomenda</b>"
+                if total == 1
+                else f"<b>{total} encomendas</b>"
+            )
             text = (
                 f"{title}{suffix}\n\n"
-                f"{total} rastreio(s). "
-                "Toque em um pacote para "
-                "abrir os detalhes."
+                f"Você tem {count_text} nesta lista.\n\n"
+                "Toque em um pacote para abrir os detalhes."
             )
 
     markup = list_keyboard(
@@ -1091,51 +1105,50 @@ async def report_cmd(
             )
         ).all()
 
-        subs = list(
-            (
-                await session.scalars(
-                    select(
-                        Subscription
-                    )
-                    .join(
-                        Shipment,
-                        Shipment.id
-                        == Subscription
-                        .shipment_id,
-                    )
-                    .where(
-                        Subscription.user_id
-                        == user.id,
-                        Subscription.is_active
-                        .is_(True),
-                    )
-                )
-            ).all()
-        )
-
-        stale = 0
-
-        for sub in subs:
-            shipment = (
-                await session.get(
-                    Shipment,
-                    sub.shipment_id,
+        stale_cutoff = (
+            datetime.now(timezone.utc)
+            - timedelta(
+                hours=(
+                    settings
+                    .stale_after_hours
                 )
             )
+        )
 
-            if (
-                shipment
-                and shipment.status
-                != "delivered"
-                and is_stale(
-                    shipment.last_event_at
-                    or shipment
-                    .registered_at,
-                    settings
-                    .stale_after_hours,
+        stale = int(
+            await session.scalar(
+                select(
+                    func.count(
+                        Subscription.id
+                    )
                 )
-            ):
-                stale += 1
+                .join(
+                    Shipment,
+                    Shipment.id
+                    == Subscription.shipment_id,
+                )
+                .where(
+                    Subscription.user_id
+                    == user.id,
+                    Subscription.is_active.is_(
+                        True
+                    ),
+                    Shipment.status
+                    != "delivered",
+                    or_(
+                        Shipment.last_event_at
+                        <= stale_cutoff,
+                        and_(
+                            Shipment.last_event_at
+                            .is_(None),
+                            Shipment.registered_at
+                            <= stale_cutoff,
+                        ),
+                    ),
+                )
+            )
+            or 0
+        )
 
     total = sum(
         int(count)
@@ -1203,16 +1216,14 @@ async def config_cmd(
         update.effective_message
         .reply_text(
             (
-                "⚙️ <b>Preferências de alertas</b>\n\n"
-                "Abra um pacote em /meus "
-                "e toque em <b>⚙️ Alertas</b>.\n\n"
-                "• ⭐ Importantes — recomendado\n"
-                "• 🔔 Todos — cada movimentação\n"
-                "• 🔕 Sem alertas — somente consulta manual\n\n"
-                "⚠️ Também avisamos uma vez "
-                "quando um pacote fica "
-                f"{days}+ dia(s) sem movimentação, "
-                "se o monitor estiver habilitado."
+                "🔔 <b>Alertas de rastreio</b>\n\n"
+                "Abra <b>📦 Meus pacotes</b>, toque na encomenda "
+                "e use o botão <b>🔔 Ativar alerta</b> ou "
+                "<b>🔕 Desativar alerta</b>.\n\n"
+                "Quando ativos, você recebe novas movimentações "
+                "importantes automaticamente.\n\n"
+                "⚠️ O bot também pode avisar quando uma encomenda "
+                f"fica {days}+ dia(s) sem movimentação."
             ),
             parse_mode=ParseMode.HTML,
         )
