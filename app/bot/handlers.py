@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import time
@@ -1563,6 +1564,88 @@ async def admin(
     )
 
 
+async def _broadcast_worker(
+    bot,
+    ids: list[int],
+    text: str,
+    admin_chat_id: int,
+) -> None:
+    sent = 0
+    failed = 0
+    batch_size = max(
+        1,
+        settings.broadcast_batch_size,
+    )
+
+    for offset in range(
+        0,
+        len(ids),
+        batch_size,
+    ):
+        batch = ids[
+            offset:offset + batch_size
+        ]
+
+        async def send_one(
+            chat_id: int,
+        ) -> bool:
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                )
+                return True
+            except Exception:
+                return False
+
+        results = await asyncio.gather(
+            *(
+                send_one(chat_id)
+                for chat_id in batch
+            )
+        )
+
+        sent += sum(
+            1
+            for result in results
+            if result
+        )
+        failed += (
+            len(results)
+            - sum(
+                1
+                for result in results
+                if result
+            )
+        )
+
+        if (
+            offset + batch_size
+            < len(ids)
+            and settings
+            .broadcast_batch_pause_seconds
+            > 0
+        ):
+            await asyncio.sleep(
+                settings
+                .broadcast_batch_pause_seconds
+            )
+
+    try:
+        await bot.send_message(
+            chat_id=admin_chat_id,
+            text=(
+                "✅ Broadcast concluído.\n"
+                f"Enviados: {sent}\n"
+                f"Falhas: {failed}"
+            ),
+        )
+    except Exception:
+        log.exception(
+            "Falha ao enviar resumo do broadcast"
+        )
+
+
 async def broadcast(
     update: Update,
     context: CallbackContext,
@@ -1600,24 +1683,23 @@ async def broadcast(
             ).all()
         )
 
-    sent = 0
-
-    for chat_id in ids:
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-            )
-            sent += 1
-        except Exception:
-            pass
+    context.application.create_task(
+        _broadcast_worker(
+            context.bot,
+            ids,
+            text,
+            update.effective_chat.id,
+        ),
+        update=update,
+        name="admin-broadcast",
+    )
 
     await (
         update.effective_message
         .reply_text(
             (
-                "✅ Broadcast enviado para "
-                f"{sent}/{len(ids)} usuários."
+                "🚀 Broadcast iniciado em segundo plano "
+                f"para {len(ids)} usuário(s)."
             )
         )
     )
