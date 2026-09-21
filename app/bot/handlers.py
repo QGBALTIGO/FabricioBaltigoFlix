@@ -69,6 +69,95 @@ def service(context: CallbackContext):
     ]
 
 
+
+def _is_channel_member(chat_member) -> bool:
+    status = str(
+        getattr(chat_member, "status", "")
+        or ""
+    ).lower()
+
+    if status in {
+        "creator",
+        "administrator",
+        "member",
+    }:
+        return True
+
+    if status == "restricted":
+        return bool(
+            getattr(chat_member, "is_member", False)
+        )
+
+    return False
+
+
+async def _require_channel_membership(
+    update: Update,
+    context: CallbackContext,
+) -> bool:
+    if not settings.required_channel_enabled:
+        return True
+
+    user = update.effective_user
+    if not user:
+        return False
+
+    try:
+        member = await context.bot.get_chat_member(
+            chat_id=settings.required_channel,
+            user_id=user.id,
+        )
+        if _is_channel_member(member):
+            return True
+    except Exception:
+        log.exception(
+            "Falha ao validar participação no canal obrigatório"
+        )
+        await update.effective_message.reply_text(
+            (
+                "⚠️ Não consegui confirmar sua participação "
+                "no canal agora. Tente novamente em instantes."
+            ),
+            reply_markup=InlineKeyboardMarkup(
+                [[
+                    InlineKeyboardButton(
+                        "🚀 Abrir Geek Hunter",
+                        url=settings.required_channel_url,
+                    )
+                ]]
+            ),
+        )
+        return False
+
+    name = html.escape(
+        user.first_name
+        or "por aí"
+    )
+    channel = html.escape(
+        settings.required_channel
+    )
+
+    await update.effective_message.reply_text(
+        (
+            f"Oi, <b>{name}</b>! 🚀\n\n"
+            "Este bot é exclusivo para membros do canal "
+            f"<b>{channel}</b>.\n\n"
+            "Para rastrear sua encomenda, entre no canal "
+            "e envie seu código de rastreio novamente 🚚✨."
+        ),
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(
+            [[
+                InlineKeyboardButton(
+                    "🚀 Entrar no Geek Hunter",
+                    url=settings.required_channel_url,
+                )
+            ]]
+        ),
+    )
+    return False
+
+
 def _keyboard(
     context: CallbackContext,
     sub: Subscription,
@@ -206,6 +295,12 @@ async def start(
         )
 
         if shipment_id:
+            if not await _require_channel_membership(
+                update,
+                context,
+            ):
+                return
+
             async with SessionLocal() as session:
                 tg = (
                     update.effective_user
@@ -404,6 +499,12 @@ async def add_tracking(
                 ),
             )
         )
+        return
+
+    if not await _require_channel_membership(
+        update,
+        context,
+    ):
         return
 
     msg = await (
