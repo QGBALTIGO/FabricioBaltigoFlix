@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
+import asyncio
+
+import httpx
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
@@ -22,12 +25,16 @@ from app.providers.base import (
     ProviderEvent,
     ProviderNotFound,
     ProviderTracking,
+    ProviderUnavailable,
 )
 from app.services.telemetry import (
     build_admin_health_snapshot,
     prune_operational_events,
 )
-from app.services.tracking import TrackingService
+from app.services.tracking import (
+    TrackingService,
+    _provider_error_detail,
+)
 
 
 @pytest.fixture
@@ -334,8 +341,26 @@ async def test_admin_health_snapshot_aggregates_real_metrics(
     assert snapshot.notification_failures_24h == 1
     assert snapshot.barcode_attempts_24h == 3
     assert snapshot.barcode_successes_24h == 1
+    assert snapshot.barcode_misses_24h == 1
+    assert snapshot.barcode_errors_24h == 1
     assert snapshot.ocr_attempts_24h == 2
     assert snapshot.ocr_successes_24h == 1
+    assert snapshot.ocr_misses_24h == 0
+    assert snapshot.ocr_errors_24h == 1
+
+    by_failures = {
+        item.name: item.failures
+        for item in snapshot.provider_failures_24h
+    }
+    assert by_failures == {
+        "correios_direct": 1
+    }
+    assert any(
+        item.name == "correios_direct"
+        and item.detail == "ProviderUnavailable"
+        and item.count == 1
+        for item in snapshot.provider_failure_causes_24h
+    )
 
     # One provider error + one Telegram error + barcode error + OCR timeout.
     # A normal no_candidate scanner miss is intentionally not a technical error.
@@ -350,9 +375,16 @@ async def test_admin_health_snapshot_aggregates_real_metrics(
     assert "Jadlog" in rendered
     assert "Quarentena" in rendered
     assert "QR/código de barras" in rendered
-    assert "1/3" in rendered
-    assert "1/2" in rendered
-    assert "Erros técnicos" in rendered
+    assert "3</b> tentativas" in rendered
+    assert "1</b> leitura direta" in rendered
+    assert "fallback normal" in rendered
+    assert "1 erro real" in rendered
+    assert "Erros técnicos · 24h: 4" in rendered
+    assert "Correios direto: <b>1</b>" in rendered
+    assert "indisponibilidade da fonte (legado): 1" in rendered
+    assert "Telegram/notificações: <b>1</b>" in rendered
+    assert "Scanner QR/código de barras: <b>1</b>" in rendered
+    assert "OCR: <b>1</b>" in rendered
 
 
 @pytest.mark.asyncio
@@ -560,3 +592,67 @@ async def test_not_found_is_a_healthy_provider_response():
     assert metric is not None
     assert metric.ok is True
     assert metric.detail == "not_found"
+
+
+
+def test_provider_error_detail_classifies_sanitized_causes():
+    assert (
+        _provider_error_detail(
+            asyncio.TimeoutError()
+        )
+        == "timeout"
+    )
+
+    request = httpx.Request(
+        "POST",
+        "https://example.invalid/graphql",
+    )
+    response = httpx.Response(
+        502,
+        request=request,
+    )
+    http_error = httpx.HTTPStatusError(
+        "bad gateway",
+        request=request,
+        response=response,
+    )
+    wrapped_http = ProviderUnavailable(
+        "fonte indisponível"
+    )
+    wrapped_http.__cause__ = http_error
+
+    assert (
+        _provider_error_detail(
+            wrapped_http
+        )
+        == "http_502"
+    )
+
+    graphql_inner = ProviderUnavailable(
+        "GraphQL temporarily unavailable"
+    )
+    wrapped_graphql = ProviderUnavailable(
+        "fonte indisponível"
+    )
+    wrapped_graphql.__cause__ = graphql_inner
+
+    assert (
+        _provider_error_detail(
+            wrapped_graphql
+        )
+        == "graphql_error"
+    )
+
+    invalid_json = ProviderUnavailable(
+        "resposta inválida"
+    )
+    invalid_json.__cause__ = ValueError(
+        "invalid json"
+    )
+
+    assert (
+        _provider_error_detail(
+            invalid_json
+        )
+        == "invalid_json"
+    )
