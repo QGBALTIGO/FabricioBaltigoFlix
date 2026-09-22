@@ -288,21 +288,130 @@ def render_admin_health(
             ),
             "",
             "📸 <b>Scanner · 24h</b>",
-            (
-                "• QR/código de barras: "
-                f"<b>{percentage(snapshot.barcode_successes_24h, snapshot.barcode_attempts_24h)}</b> "
-                f"({snapshot.barcode_successes_24h}/{snapshot.barcode_attempts_24h})"
-            ),
-            (
-                "• OCR: "
-                f"<b>{percentage(snapshot.ocr_successes_24h, snapshot.ocr_attempts_24h)}</b> "
-                f"({snapshot.ocr_successes_24h}/{snapshot.ocr_attempts_24h})"
-            ),
+        ]
+    )
+
+    if snapshot.barcode_attempts_24h:
+        attempt_word = (
+            "tentativa"
+            if snapshot.barcode_attempts_24h == 1
+            else "tentativas"
+        )
+        read_word = (
+            "leitura direta"
+            if snapshot.barcode_successes_24h == 1
+            else "leituras diretas"
+        )
+        lines.append(
+            "• QR/código de barras: "
+            f"<b>{snapshot.barcode_attempts_24h}</b> {attempt_word} · "
+            f"<b>{snapshot.barcode_successes_24h}</b> {read_word}"
+        )
+        if snapshot.barcode_misses_24h:
+            miss_word = (
+                "sem leitura direta"
+                if snapshot.barcode_misses_24h == 1
+                else "sem leitura direta"
+            )
+            lines.append(
+                "  ↳ "
+                f"{snapshot.barcode_misses_24h} {miss_word} "
+                "(fallback normal)"
+            )
+        if snapshot.barcode_errors_24h:
+            lines.append(
+                "  ↳ <b>"
+                f"{snapshot.barcode_errors_24h} erro"
+                f"{'' if snapshot.barcode_errors_24h == 1 else 's'} real"
+                f"{'' if snapshot.barcode_errors_24h == 1 else 'is'}"
+                "</b>"
+            )
+    else:
+        lines.append(
+            "• QR/código de barras: nenhuma tentativa."
+        )
+
+    if snapshot.ocr_attempts_24h:
+        attempt_word = (
+            "tentativa"
+            if snapshot.ocr_attempts_24h == 1
+            else "tentativas"
+        )
+        read_word = (
+            "leitura"
+            if snapshot.ocr_successes_24h == 1
+            else "leituras"
+        )
+        lines.append(
+            "• OCR: "
+            f"<b>{snapshot.ocr_attempts_24h}</b> {attempt_word} · "
+            f"<b>{snapshot.ocr_successes_24h}</b> {read_word}"
+        )
+        if snapshot.ocr_misses_24h:
+            lines.append(
+                "  ↳ "
+                f"{snapshot.ocr_misses_24h} sem código encontrado"
+            )
+        if snapshot.ocr_errors_24h:
+            lines.append(
+                "  ↳ <b>"
+                f"{snapshot.ocr_errors_24h} erro"
+                f"{'' if snapshot.ocr_errors_24h == 1 else 's'} real"
+                f"{'' if snapshot.ocr_errors_24h == 1 else 'is'}"
+                "</b>"
+            )
+    else:
+        lines.append(
+            "• OCR: nenhuma tentativa."
+        )
+
+    lines.extend(
+        [
             "",
             (
-                "⚠️ <b>Erros técnicos · 24h:</b> "
-                f"{snapshot.technical_errors_24h}"
+                "⚠️ <b>Erros técnicos · 24h: "
+                f"{snapshot.technical_errors_24h}</b>"
             ),
+        ]
+    )
+
+    if snapshot.technical_errors_24h:
+        for metric in snapshot.provider_failures_24h:
+            lines.append(
+                "• "
+                + html.escape(
+                    provider_label(
+                        metric.name
+                    )
+                )
+                + f": <b>{metric.failures}</b>"
+            )
+
+        if snapshot.notification_failures_24h:
+            lines.append(
+                "• Telegram/notificações: "
+                f"<b>{snapshot.notification_failures_24h}</b>"
+            )
+
+        if snapshot.barcode_errors_24h:
+            lines.append(
+                "• Scanner QR/código de barras: "
+                f"<b>{snapshot.barcode_errors_24h}</b>"
+            )
+
+        if snapshot.ocr_errors_24h:
+            lines.append(
+                "• OCR: "
+                f"<b>{snapshot.ocr_errors_24h}</b>"
+            )
+    else:
+        lines.append(
+            "✅ Nenhum erro técnico nas últimas 24h."
+        )
+
+    lines.extend(
+        [
+            "",
             (
                 "👥 Usuários: "
                 f"{snapshot.users} · "
