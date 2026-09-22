@@ -24,6 +24,42 @@ from app.services.telemetry import (
 settings = get_settings()
 
 
+def _failure_cause_label(
+    detail: str,
+) -> str:
+    value = str(
+        detail
+        or "unknown"
+    )
+
+    labels = {
+        "timeout": "timeout",
+        "connection": "erro de conexão",
+        "invalid_json": "resposta inválida",
+        "graphql_error": "erro GraphQL",
+        "graphql_auth": "autenticação GraphQL",
+        "provider_unavailable": "indisponibilidade da fonte",
+        "ProviderUnavailable": "indisponibilidade da fonte (legado)",
+        "unknown": "causa não registrada",
+    }
+
+    if value in labels:
+        return labels[value]
+
+    if value.startswith(
+        "http_"
+    ):
+        return (
+            "HTTP "
+            + value.split(
+                "_",
+                1,
+            )[1]
+        )
+
+    return value
+
+
 def _latency_label(
     metric: ProviderMetric,
 ) -> str:
@@ -308,22 +344,24 @@ def render_admin_health(
             f"<b>{snapshot.barcode_successes_24h}</b> {read_word}"
         )
         if snapshot.barcode_misses_24h:
-            miss_word = (
-                "sem leitura direta"
-                if snapshot.barcode_misses_24h == 1
-                else "sem leitura direta"
-            )
             lines.append(
                 "  ↳ "
-                f"{snapshot.barcode_misses_24h} {miss_word} "
-                "(fallback normal)"
+                f"{snapshot.barcode_misses_24h} "
+                + (
+                    "tentativa sem leitura direta"
+                    if snapshot.barcode_misses_24h == 1
+                    else "tentativas sem leitura direta"
+                )
+                + " (fallback normal)"
             )
         if snapshot.barcode_errors_24h:
             lines.append(
                 "  ↳ <b>"
-                f"{snapshot.barcode_errors_24h} erro"
-                f"{'' if snapshot.barcode_errors_24h == 1 else 's'} real"
-                f"{'' if snapshot.barcode_errors_24h == 1 else 'is'}"
+                + (
+                    "1 erro real"
+                    if snapshot.barcode_errors_24h == 1
+                    else f"{snapshot.barcode_errors_24h} erros reais"
+                )
                 "</b>"
             )
     else:
@@ -355,9 +393,11 @@ def render_admin_health(
         if snapshot.ocr_errors_24h:
             lines.append(
                 "  ↳ <b>"
-                f"{snapshot.ocr_errors_24h} erro"
-                f"{'' if snapshot.ocr_errors_24h == 1 else 's'} real"
-                f"{'' if snapshot.ocr_errors_24h == 1 else 'is'}"
+                + (
+                    "1 erro real"
+                    if snapshot.ocr_errors_24h == 1
+                    else f"{snapshot.ocr_errors_24h} erros reais"
+                )
                 "</b>"
             )
     else:
@@ -386,6 +426,22 @@ def render_admin_health(
                 )
                 + f": <b>{metric.failures}</b>"
             )
+
+            causes = [
+                item
+                for item in snapshot.provider_failure_causes_24h
+                if item.name == metric.name
+            ]
+            for cause in causes[:4]:
+                lines.append(
+                    "  ↳ "
+                    + html.escape(
+                        _failure_cause_label(
+                            cause.detail
+                        )
+                    )
+                    + f": {cause.count}"
+                )
 
         if snapshot.notification_failures_24h:
             lines.append(
