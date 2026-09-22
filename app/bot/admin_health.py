@@ -398,7 +398,7 @@ def render_admin_health(
                     if snapshot.ocr_errors_24h == 1
                     else f"{snapshot.ocr_errors_24h} erros reais"
                 )
-                "</b>"
+                + "</b>"
             )
     else:
         lines.append(
