@@ -46,6 +46,13 @@ class ProviderMetric:
 
 
 @dataclass(slots=True)
+class ProviderFailureCause:
+    name: str
+    detail: str
+    count: int
+
+
+@dataclass(slots=True)
 class QuarantinedProvider:
     name: str
     failures: int
@@ -62,6 +69,8 @@ class AdminHealthSnapshot:
     poll_backlog: int
     provider_queries_hour: int
     provider_metrics: list[ProviderMetric]
+    provider_failures_24h: list[ProviderMetric]
+    provider_failure_causes_24h: list[ProviderFailureCause]
     carrier_metrics: list[ProviderMetric]
     fastest_provider: ProviderMetric | None
     quarantined: list[QuarantinedProvider]
@@ -69,8 +78,12 @@ class AdminHealthSnapshot:
     notification_failures_24h: int
     barcode_attempts_24h: int
     barcode_successes_24h: int
+    barcode_misses_24h: int
+    barcode_errors_24h: int
     ocr_attempts_24h: int
     ocr_successes_24h: int
+    ocr_misses_24h: int
+    ocr_errors_24h: int
     technical_errors_24h: int
 
 
@@ -355,6 +368,64 @@ async def _carrier_metrics(
     ]
 
 
+async def _provider_failure_causes(
+    session: AsyncSession,
+    *,
+    since: datetime,
+) -> list[ProviderFailureCause]:
+    rows = (
+        await session.execute(
+            select(
+                OperationalEvent.name,
+                OperationalEvent.detail,
+                func.count(
+                    OperationalEvent.id
+                ),
+            )
+            .where(
+                OperationalEvent.kind
+                == "provider_query",
+                OperationalEvent.created_at
+                >= since,
+                OperationalEvent.ok.is_(
+                    False
+                ),
+            )
+            .group_by(
+                OperationalEvent.name,
+                OperationalEvent.detail,
+            )
+            .order_by(
+                func.count(
+                    OperationalEvent.id
+                ).desc()
+            )
+        )
+    ).all()
+
+    return [
+        ProviderFailureCause(
+            name=str(
+                name
+                or "unknown"
+            ),
+            detail=str(
+                detail
+                or "unknown"
+            ),
+            count=int(
+                count
+                or 0
+            ),
+        )
+        for (
+            name,
+            detail,
+            count,
+        ) in rows
+    ]
+
+
 async def build_admin_health_snapshot(
     session: AsyncSession,
     *,
@@ -463,6 +534,30 @@ async def build_admin_health_snapshot(
             since=hour_cutoff,
         )
     )
+    provider_metrics_24h = (
+        await _provider_metrics(
+            session,
+            since=day_cutoff,
+        )
+    )
+    provider_failures_24h = sorted(
+        (
+            item
+            for item in provider_metrics_24h
+            if item.failures > 0
+        ),
+        key=lambda item: (
+            -item.failures,
+            -item.queries,
+            item.name,
+        ),
+    )
+    provider_failure_causes_24h = (
+        await _provider_failure_causes(
+            session,
+            since=day_cutoff,
+        )
+    )
     provider_queries_hour = sum(
         item.queries
         for item in provider_metrics
@@ -484,15 +579,9 @@ async def build_admin_health_snapshot(
     ]
 
     if not eligible_fastest:
-        day_metrics = (
-            await _provider_metrics(
-                session,
-                since=day_cutoff,
-            )
-        )
         eligible_fastest = [
             item
-            for item in day_metrics
+            for item in provider_metrics_24h
             if (
                 item.successes >= 3
                 and item.avg_ms is not None
@@ -584,7 +673,21 @@ async def build_admin_health_snapshot(
 
     async def scan_counts(
         name: str,
-    ) -> tuple[int, int]:
+    ) -> tuple[
+        int,
+        int,
+        int,
+        int,
+    ]:
+        base = (
+            OperationalEvent.kind
+            == "image_scan",
+            OperationalEvent.name
+            == name,
+            OperationalEvent.created_at
+            >= day_cutoff,
+        )
+
         total = int(
             await session.scalar(
                 select(
@@ -592,12 +695,7 @@ async def build_admin_health_snapshot(
                         OperationalEvent.id
                     )
                 ).where(
-                    OperationalEvent.kind
-                    == "image_scan",
-                    OperationalEvent.name
-                    == name,
-                    OperationalEvent.created_at
-                    >= day_cutoff,
+                    *base
                 )
             )
             or 0
@@ -609,12 +707,7 @@ async def build_admin_health_snapshot(
                         OperationalEvent.id
                     )
                 ).where(
-                    OperationalEvent.kind
-                    == "image_scan",
-                    OperationalEvent.name
-                    == name,
-                    OperationalEvent.created_at
-                    >= day_cutoff,
+                    *base,
                     OperationalEvent.ok.is_(
                         True
                     ),
@@ -622,58 +715,73 @@ async def build_admin_health_snapshot(
             )
             or 0
         )
-        return total, success
+        misses = int(
+            await session.scalar(
+                select(
+                    func.count(
+                        OperationalEvent.id
+                    )
+                ).where(
+                    *base,
+                    OperationalEvent.detail
+                    == "no_candidate",
+                )
+            )
+            or 0
+        )
+        errors = int(
+            await session.scalar(
+                select(
+                    func.count(
+                        OperationalEvent.id
+                    )
+                ).where(
+                    *base,
+                    OperationalEvent.detail
+                    .in_(
+                        [
+                            "error",
+                            "timeout",
+                        ]
+                    ),
+                )
+            )
+            or 0
+        )
+
+        return (
+            total,
+            success,
+            misses,
+            errors,
+        )
 
     (
         barcode_attempts_24h,
         barcode_successes_24h,
+        barcode_misses_24h,
+        barcode_errors_24h,
     ) = await scan_counts(
         "barcode"
     )
     (
         ocr_attempts_24h,
         ocr_successes_24h,
+        ocr_misses_24h,
+        ocr_errors_24h,
     ) = await scan_counts(
         "ocr"
     )
 
-    technical_errors_24h = int(
-        await session.scalar(
-            select(
-                func.count(
-                    OperationalEvent.id
-                )
-            ).where(
-                OperationalEvent.created_at
-                >= day_cutoff,
-                or_(
-                    and_(
-                        OperationalEvent.kind
-                        .in_(
-                            [
-                                "provider_query",
-                                "notification",
-                            ]
-                        ),
-                        OperationalEvent.ok.is_(
-                            False
-                        ),
-                    ),
-                    and_(
-                        OperationalEvent.kind
-                        == "image_scan",
-                        OperationalEvent.detail
-                        .in_(
-                            [
-                                "error",
-                                "timeout",
-                            ]
-                        ),
-                    ),
-                ),
-            )
-        )
-        or 0
+    provider_errors_24h = sum(
+        item.failures
+        for item in provider_failures_24h
+    )
+    technical_errors_24h = (
+        provider_errors_24h
+        + notification_failures_24h
+        + barcode_errors_24h
+        + ocr_errors_24h
     )
 
     return AdminHealthSnapshot(
@@ -685,6 +793,8 @@ async def build_admin_health_snapshot(
         poll_backlog=poll_backlog,
         provider_queries_hour=provider_queries_hour,
         provider_metrics=provider_metrics,
+        provider_failures_24h=provider_failures_24h,
+        provider_failure_causes_24h=provider_failure_causes_24h,
         carrier_metrics=carrier_metrics,
         fastest_provider=fastest_provider,
         quarantined=quarantined,
@@ -692,8 +802,12 @@ async def build_admin_health_snapshot(
         notification_failures_24h=notification_failures_24h,
         barcode_attempts_24h=barcode_attempts_24h,
         barcode_successes_24h=barcode_successes_24h,
+        barcode_misses_24h=barcode_misses_24h,
+        barcode_errors_24h=barcode_errors_24h,
         ocr_attempts_24h=ocr_attempts_24h,
         ocr_successes_24h=ocr_successes_24h,
+        ocr_misses_24h=ocr_misses_24h,
+        ocr_errors_24h=ocr_errors_24h,
         technical_errors_24h=technical_errors_24h,
     )
 

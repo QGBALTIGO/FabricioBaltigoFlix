@@ -24,6 +24,42 @@ from app.services.telemetry import (
 settings = get_settings()
 
 
+def _failure_cause_label(
+    detail: str,
+) -> str:
+    value = str(
+        detail
+        or "unknown"
+    )
+
+    labels = {
+        "timeout": "timeout",
+        "connection": "erro de conexão",
+        "invalid_json": "resposta inválida",
+        "graphql_error": "erro GraphQL",
+        "graphql_auth": "autenticação GraphQL",
+        "provider_unavailable": "indisponibilidade da fonte",
+        "ProviderUnavailable": "indisponibilidade da fonte (legado)",
+        "unknown": "causa não registrada",
+    }
+
+    if value in labels:
+        return labels[value]
+
+    if value.startswith(
+        "http_"
+    ):
+        return (
+            "HTTP "
+            + value.split(
+                "_",
+                1,
+            )[1]
+        )
+
+    return value
+
+
 def _latency_label(
     metric: ProviderMetric,
 ) -> str:
@@ -288,21 +324,150 @@ def render_admin_health(
             ),
             "",
             "📸 <b>Scanner · 24h</b>",
-            (
-                "• QR/código de barras: "
-                f"<b>{percentage(snapshot.barcode_successes_24h, snapshot.barcode_attempts_24h)}</b> "
-                f"({snapshot.barcode_successes_24h}/{snapshot.barcode_attempts_24h})"
-            ),
-            (
-                "• OCR: "
-                f"<b>{percentage(snapshot.ocr_successes_24h, snapshot.ocr_attempts_24h)}</b> "
-                f"({snapshot.ocr_successes_24h}/{snapshot.ocr_attempts_24h})"
-            ),
+        ]
+    )
+
+    if snapshot.barcode_attempts_24h:
+        attempt_word = (
+            "tentativa"
+            if snapshot.barcode_attempts_24h == 1
+            else "tentativas"
+        )
+        read_word = (
+            "leitura direta"
+            if snapshot.barcode_successes_24h == 1
+            else "leituras diretas"
+        )
+        lines.append(
+            "• QR/código de barras: "
+            f"<b>{snapshot.barcode_attempts_24h}</b> {attempt_word} · "
+            f"<b>{snapshot.barcode_successes_24h}</b> {read_word}"
+        )
+        if snapshot.barcode_misses_24h:
+            lines.append(
+                "  ↳ "
+                f"{snapshot.barcode_misses_24h} "
+                + (
+                    "tentativa sem leitura direta"
+                    if snapshot.barcode_misses_24h == 1
+                    else "tentativas sem leitura direta"
+                )
+                + " (fallback normal)"
+            )
+        if snapshot.barcode_errors_24h:
+            lines.append(
+                "  ↳ <b>"
+                + (
+                    "1 erro real"
+                    if snapshot.barcode_errors_24h == 1
+                    else f"{snapshot.barcode_errors_24h} erros reais"
+                )
+                + "</b>"
+            )
+    else:
+        lines.append(
+            "• QR/código de barras: nenhuma tentativa."
+        )
+
+    if snapshot.ocr_attempts_24h:
+        attempt_word = (
+            "tentativa"
+            if snapshot.ocr_attempts_24h == 1
+            else "tentativas"
+        )
+        read_word = (
+            "leitura"
+            if snapshot.ocr_successes_24h == 1
+            else "leituras"
+        )
+        lines.append(
+            "• OCR: "
+            f"<b>{snapshot.ocr_attempts_24h}</b> {attempt_word} · "
+            f"<b>{snapshot.ocr_successes_24h}</b> {read_word}"
+        )
+        if snapshot.ocr_misses_24h:
+            lines.append(
+                "  ↳ "
+                f"{snapshot.ocr_misses_24h} sem código encontrado"
+            )
+        if snapshot.ocr_errors_24h:
+            lines.append(
+                "  ↳ <b>"
+                + (
+                    "1 erro real"
+                    if snapshot.ocr_errors_24h == 1
+                    else f"{snapshot.ocr_errors_24h} erros reais"
+                )
+                + "</b>"
+            )
+    else:
+        lines.append(
+            "• OCR: nenhuma tentativa."
+        )
+
+    lines.extend(
+        [
             "",
             (
-                "⚠️ <b>Erros técnicos · 24h:</b> "
-                f"{snapshot.technical_errors_24h}"
+                "⚠️ <b>Erros técnicos · 24h: "
+                f"{snapshot.technical_errors_24h}</b>"
             ),
+        ]
+    )
+
+    if snapshot.technical_errors_24h:
+        for metric in snapshot.provider_failures_24h:
+            lines.append(
+                "• "
+                + html.escape(
+                    provider_label(
+                        metric.name
+                    )
+                )
+                + f": <b>{metric.failures}</b>"
+            )
+
+            causes = [
+                item
+                for item in snapshot.provider_failure_causes_24h
+                if item.name == metric.name
+            ]
+            for cause in causes[:4]:
+                lines.append(
+                    "  ↳ "
+                    + html.escape(
+                        _failure_cause_label(
+                            cause.detail
+                        )
+                    )
+                    + f": {cause.count}"
+                )
+
+        if snapshot.notification_failures_24h:
+            lines.append(
+                "• Telegram/notificações: "
+                f"<b>{snapshot.notification_failures_24h}</b>"
+            )
+
+        if snapshot.barcode_errors_24h:
+            lines.append(
+                "• Scanner QR/código de barras: "
+                f"<b>{snapshot.barcode_errors_24h}</b>"
+            )
+
+        if snapshot.ocr_errors_24h:
+            lines.append(
+                "• OCR: "
+                f"<b>{snapshot.ocr_errors_24h}</b>"
+            )
+    else:
+        lines.append(
+            "✅ Nenhum erro técnico nas últimas 24h."
+        )
+
+    lines.extend(
+        [
+            "",
             (
                 "👥 Usuários: "
                 f"{snapshot.users} · "
