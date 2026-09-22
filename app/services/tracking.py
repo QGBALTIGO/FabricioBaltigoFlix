@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import httpx
 import json
 import weakref
 from dataclasses import dataclass
@@ -49,6 +50,104 @@ class AddResult:
     subscription: Subscription
     created_shipment: bool
     warning: str | None = None
+
+
+def _provider_error_detail(
+    error: Exception | None,
+) -> str | None:
+    if error is None:
+        return None
+
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    seen: set[int] = set()
+
+    while (
+        current is not None
+        and id(current) not in seen
+        and len(chain) < 6
+    ):
+        seen.add(id(current))
+        chain.append(current)
+        current = (
+            current.__cause__
+            or current.__context__
+        )
+
+    for item in chain:
+        if isinstance(
+            item,
+            (
+                asyncio.TimeoutError,
+                httpx.TimeoutException,
+            ),
+        ):
+            return "timeout"
+
+        if isinstance(
+            item,
+            httpx.HTTPStatusError,
+        ):
+            return (
+                "http_"
+                + str(
+                    int(
+                        item.response.status_code
+                    )
+                )
+            )
+
+        if isinstance(
+            item,
+            (
+                httpx.ConnectError,
+                httpx.NetworkError,
+            ),
+        ):
+            return "connection"
+
+        if isinstance(
+            item,
+            ValueError,
+        ):
+            return "invalid_json"
+
+    text = str(
+        error
+    ).lower()
+    if (
+        "tempo limite" in text
+        or "timed out" in text
+        or "timeout" in text
+    ):
+        return "timeout"
+
+    cause = getattr(
+        error,
+        "__cause__",
+        None,
+    )
+    if isinstance(
+        cause,
+        ProviderUnavailable,
+    ):
+        cause_text = str(
+            cause
+        ).lower()
+        if (
+            "unauthorized" in cause_text
+            or "unauthenticated" in cause_text
+        ):
+            return "graphql_auth"
+        return "graphql_error"
+
+    if isinstance(
+        error,
+        ProviderUnavailable,
+    ):
+        return "provider_unavailable"
+
+    return type(error).__name__[:120]
 
 
 class TrackingService:
@@ -811,10 +910,8 @@ class TrackingService:
                 detail=(
                     "not_found"
                     if healthy_not_found
-                    else (
-                        type(error).__name__
-                        if error is not None
-                        else None
+                    else _provider_error_detail(
+                        error
                     )
                 ),
                 context_name=(
@@ -893,10 +990,8 @@ class TrackingService:
                     detail=(
                         "not_found"
                         if healthy_not_found
-                        else (
-                            type(error).__name__
-                            if error is not None
-                            else None
+                        else _provider_error_detail(
+                            error
                         )
                     ),
                     context_name=(
