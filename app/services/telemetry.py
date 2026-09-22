@@ -46,6 +46,13 @@ class ProviderMetric:
 
 
 @dataclass(slots=True)
+class ProviderFailureCause:
+    name: str
+    detail: str
+    count: int
+
+
+@dataclass(slots=True)
 class QuarantinedProvider:
     name: str
     failures: int
@@ -63,6 +70,7 @@ class AdminHealthSnapshot:
     provider_queries_hour: int
     provider_metrics: list[ProviderMetric]
     provider_failures_24h: list[ProviderMetric]
+    provider_failure_causes_24h: list[ProviderFailureCause]
     carrier_metrics: list[ProviderMetric]
     fastest_provider: ProviderMetric | None
     quarantined: list[QuarantinedProvider]
@@ -360,6 +368,64 @@ async def _carrier_metrics(
     ]
 
 
+async def _provider_failure_causes(
+    session: AsyncSession,
+    *,
+    since: datetime,
+) -> list[ProviderFailureCause]:
+    rows = (
+        await session.execute(
+            select(
+                OperationalEvent.name,
+                OperationalEvent.detail,
+                func.count(
+                    OperationalEvent.id
+                ),
+            )
+            .where(
+                OperationalEvent.kind
+                == "provider_query",
+                OperationalEvent.created_at
+                >= since,
+                OperationalEvent.ok.is_(
+                    False
+                ),
+            )
+            .group_by(
+                OperationalEvent.name,
+                OperationalEvent.detail,
+            )
+            .order_by(
+                func.count(
+                    OperationalEvent.id
+                ).desc()
+            )
+        )
+    ).all()
+
+    return [
+        ProviderFailureCause(
+            name=str(
+                name
+                or "unknown"
+            ),
+            detail=str(
+                detail
+                or "unknown"
+            ),
+            count=int(
+                count
+                or 0
+            ),
+        )
+        for (
+            name,
+            detail,
+            count,
+        ) in rows
+    ]
+
+
 async def build_admin_health_snapshot(
     session: AsyncSession,
     *,
@@ -485,6 +551,12 @@ async def build_admin_health_snapshot(
             -item.queries,
             item.name,
         ),
+    )
+    provider_failure_causes_24h = (
+        await _provider_failure_causes(
+            session,
+            since=day_cutoff,
+        )
     )
     provider_queries_hour = sum(
         item.queries
@@ -722,6 +794,7 @@ async def build_admin_health_snapshot(
         provider_queries_hour=provider_queries_hour,
         provider_metrics=provider_metrics,
         provider_failures_24h=provider_failures_24h,
+        provider_failure_causes_24h=provider_failure_causes_24h,
         carrier_metrics=carrier_metrics,
         fastest_provider=fastest_provider,
         quarantined=quarantined,
