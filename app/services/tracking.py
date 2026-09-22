@@ -164,7 +164,17 @@ class TrackingService:
         self._provider_semaphores: dict[str, asyncio.Semaphore] = {}
 
         self.melhor = (
-            MelhorRastreioProvider(settings.http_timeout_seconds)
+            MelhorRastreioProvider(
+                settings.http_timeout_seconds,
+                total_timeout=max(
+                    3.0,
+                    min(
+                        settings.http_timeout_seconds,
+                        settings.provider_query_timeout_seconds
+                        - 0.5,
+                    ),
+                ),
+            )
             if settings.melhor_rastreio_enabled
             else None
         )

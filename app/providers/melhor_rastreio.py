@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
@@ -75,8 +76,27 @@ class MelhorRastreioProvider:
     }
     """
 
-    def __init__(self, timeout: float = 30.0):
-        self.timeout = timeout
+    def __init__(
+        self,
+        timeout: float = 30.0,
+        total_timeout: float | None = None,
+    ):
+        self.timeout = max(
+            1.0,
+            float(timeout),
+        )
+        total = (
+            self.timeout
+            if total_timeout is None
+            else float(total_timeout)
+        )
+        self.total_timeout = max(
+            1.0,
+            min(
+                total,
+                self.timeout,
+            ),
+        )
 
     async def register(self, tracking_number: str) -> ProviderTracking:
         return await self.fetch(tracking_number)
@@ -88,8 +108,19 @@ class MelhorRastreioProvider:
         provider_tracking_id: str | None = None,
     ) -> ProviderTracking:
         number = tracking_number.strip().upper()
-        tracker_types = self._candidate_types(number, carrier_code)
+        tracker_types = self._candidate_types(
+            number,
+            carrier_code,
+        )
         last_transport_error: Exception | None = None
+        had_healthy_response = False
+        budget_exhausted = False
+
+        loop = asyncio.get_running_loop()
+        deadline = (
+            loop.time()
+            + self.total_timeout
+        )
 
         for tracker_type in tracker_types:
             payload = {
@@ -103,12 +134,31 @@ class MelhorRastreioProvider:
             }
 
             for endpoint in self.endpoints:
+                remaining = (
+                    deadline
+                    - loop.time()
+                )
+                if remaining <= 0.25:
+                    last_transport_error = (
+                        httpx.TimeoutException(
+                            "Tempo total da fonte excedido."
+                        )
+                    )
+                    budget_exhausted = True
+                    break
+
+                request_timeout = min(
+                    self.timeout,
+                    4.0,
+                    remaining,
+                )
+
                 try:
                     client = await get_provider_http_client()
                     response = await client.post(
                         endpoint,
                         json=payload,
-                        timeout=self.timeout,
+                        timeout=request_timeout,
                         headers={
                                 "Content-Type": "application/json",
                                 "Accept": "application/json",
@@ -131,17 +181,46 @@ class MelhorRastreioProvider:
                         str(item.get("message") or item)
                         for item in errors
                     )
-                    if "unauthorized" in message.lower():
-                        last_transport_error = ProviderUnavailable(message)
-                        continue
-                    last_transport_error = ProviderUnavailable(message)
+                    last_transport_error = (
+                        ProviderUnavailable(
+                            message
+                        )
+                    )
                     continue
 
-                result = (body.get("data") or {}).get("result")
+                had_healthy_response = True
+
+                result = (
+                    body.get("data")
+                    or {}
+                ).get("result")
                 if not result:
                     break
 
-                return self.parse_result(number, tracker_type, result)
+                return self.parse_result(
+                    number,
+                    tracker_type,
+                    result,
+                )
+
+            if budget_exhausted:
+                break
+
+        if budget_exhausted:
+            error = (
+                last_transport_error
+                or httpx.TimeoutException(
+                    "Tempo total da fonte excedido."
+                )
+            )
+            raise ProviderUnavailable(
+                f"Melhor Rastreio indisponível: {error}"
+            ) from error
+
+        if had_healthy_response:
+            raise ProviderNotFound(
+                f"Código {number} ainda não encontrado no Melhor Rastreio."
+            )
 
         if last_transport_error:
             raise ProviderUnavailable(
